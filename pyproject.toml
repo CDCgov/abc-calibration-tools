@@ -19,6 +19,7 @@ pyqt6 = "^6.7.1"
 pyarrow = "^17.0.0"
 tqdm = "^4.66.5"
 polars = "^1.6.0"
+pytest = "^8.3.3"
 
 
 [build-system]
