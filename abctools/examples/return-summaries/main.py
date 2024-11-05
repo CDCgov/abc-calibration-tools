@@ -4,7 +4,7 @@
 from abctools import manager, abc_methods
 # from abctools.abc_classes import SimulationBundle
 
-seed = 12345
+seed = 1234
 replicates = 10
 
 prior_sampler_distros = {

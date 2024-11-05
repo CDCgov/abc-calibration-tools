@@ -7,8 +7,8 @@ Dockerfile
 # Folders
 experiments/*
 input/*
-abctools/examples/*.yaml
-abctools/examples/*.json
+abctools/examples/**/*.YAML
+abctools/examples/**/*.json
 
 # Azure Batch config file
 *config.toml

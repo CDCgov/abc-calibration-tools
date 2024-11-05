@@ -1,7 +1,7 @@
 baseScenario:
-  averageContactsPerDay: 1.1456498612979047
-  infectiousPeriod: 2.5614029905916578
+  averageContactsPerDay: 2.749100656171599
+  infectiousPeriod: 5.468428781431073
   initialPrevalence: 0.005
   population: 1000
-  randomSeed: 3087940365
+  randomSeed: 2676973563
   totalDays: 100
