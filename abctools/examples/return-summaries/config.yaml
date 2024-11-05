@@ -1,0 +1,7 @@
+baseScenario:
+  population: 1000
+  initialPrevalence: 0.005
+  totalDays: 100
+  averageContactsPerDay: 1.7
+  infectiousPeriod: 5
+  randomSeed: 12345

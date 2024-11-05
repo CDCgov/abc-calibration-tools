@@ -1,0 +1,68 @@
+{
+    "baseline_parameters": {
+        "baseScenario": {
+            "population": 1000,
+            "initialPrevalence": 0.005,
+            "totalDays": 100,
+            "averageContactsPerDay": 2.1638818479117234,
+            "infectiousPeriod": 3.882923736490506,
+            "randomSeed": 101022850
+        }
+    },
+    "experiment_parameters": [
+        "averageContactsPerDay",
+        "infectiousPeriod"
+    ],
+    "simulation_parameter_values": {
+        "0": {
+            "averageContactsPerDay": 0.610400069705338,
+            "infectiousPeriod": 4.190724316544837,
+            "randomSeed": 831769172
+        },
+        "1": {
+            "averageContactsPerDay": 2.620123094633433,
+            "infectiousPeriod": 1.4795872073137915,
+            "randomSeed": 2430986565
+        },
+        "2": {
+            "averageContactsPerDay": 3.36332821693495,
+            "infectiousPeriod": 10.109707287909933,
+            "randomSeed": 694443915
+        },
+        "3": {
+            "averageContactsPerDay": 1.7194770283802754,
+            "infectiousPeriod": 3.5629006792619986,
+            "randomSeed": 1859447115
+        },
+        "4": {
+            "averageContactsPerDay": 2.0090512238966998,
+            "infectiousPeriod": 6.652171079344682,
+            "randomSeed": 2376066489
+        },
+        "5": {
+            "averageContactsPerDay": 2.837222074158081,
+            "infectiousPeriod": 2.7165687441049826,
+            "randomSeed": 2164385946
+        },
+        "6": {
+            "averageContactsPerDay": 2.2992588693043814,
+            "infectiousPeriod": 5.0891853716379085,
+            "randomSeed": 636282949
+        },
+        "7": {
+            "averageContactsPerDay": 1.1456498612979047,
+            "infectiousPeriod": 2.5614029905916578,
+            "randomSeed": 3087940365
+        },
+        "8": {
+            "averageContactsPerDay": 1.2917491042135754,
+            "infectiousPeriod": 7.419864959951329,
+            "randomSeed": 1466990855
+        },
+        "9": {
+            "averageContactsPerDay": 2.1638818479117234,
+            "infectiousPeriod": 3.882923736490506,
+            "randomSeed": 101022850
+        }
+    }
+}
