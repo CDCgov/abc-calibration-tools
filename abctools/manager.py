@@ -8,7 +8,7 @@ from abctools.abc_classes import SimulationBundle
 
 
 def call_experiment(
-    config: str, experiment_mode: str, **kwargs
+    config: str, experiment_mode: str, protocol=(), **kwargs
 ) -> SimulationBundle:
     """
     Overall wrapper function to take in pipeline workflow as dictionary and relevant conditions as a config path
@@ -110,7 +110,7 @@ def call_experiment(
         sub_dir = "simulations"
 
     # Making specified folders to house simulations if writing
-    if "write" in kwargs["protocol"]:
+    if "write" in protocol:
         wrappers.gcm_experiments_writer(
             experiments_dir=dir,
             super_experiment_name=experiment_mode,

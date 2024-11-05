@@ -1,30 +1,42 @@
-import pytest
 import polars as pl
-from scipy.stats import uniform
+import pytest
+from polars.testing import assert_frame_equal
 
-from abctools import abc_methods, plot_utils, toy_model, manager
+# from abctools import abc_methods, manager, plot_utils, toy_model
+from abctools import manager
 from abctools.abc_classes import SimulationBundle
+
+# from scipy.stats import uniform
+
 
 ## ======================================#
 ## Seed assignment---
 ## ======================================#
 
-@pytest.fixture
+
 def initialize_baseline():
     return {"x": 100}
 
-@pytest.fixture
-def seed():
-    return 0
 
 @pytest.fixture
-def empty_bundle(seed, initialize_baseline):
-    empty_bundle = manager.call_experiment("empty_config", 
-                                        "generate_seed", 
-                                        project_seed=seed,
-                                        initializer = initialize_baseline)
-    return empty_bundle.inputs
+def fixed_seed():
+    yield 0
 
-def test_empty_bundle(empty_bundle):
-    manual_bundle = pl.DataFrame({"simulation": 0, "randomSeed": seed})
-    pl.testing.assert_frame_equal(empty_bundle, manual_bundle)
+
+@pytest.fixture
+def empty_bundle_df(fixed_seed):
+    empty_bundle = manager.call_experiment(
+        "empty_config",
+        "generate_seed",
+        project_seed=fixed_seed,
+        initializer=initialize_baseline,
+    )
+    yield empty_bundle.inputs
+
+
+def test_empty_bundle(empty_bundle_df, fixed_seed):
+    manual_bundle_df = pl.DataFrame(
+        {"simulation": 0, "randomSeed": fixed_seed}
+    )
+
+    assert_frame_equal(empty_bundle_df, manual_bundle_df)
