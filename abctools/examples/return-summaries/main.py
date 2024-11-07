@@ -20,6 +20,7 @@ prior_sampler_distros = {
     ),
 }
 
+
 # Simulation setup compatible with GCM baseScenario YAML files
 def run_toy_model(params: dict):
     """Runs toy stochastic SIR model"""
@@ -64,6 +65,7 @@ def run_toy_model(params: dict):
     )
     return results_df
 
+
 # Simulation running wrapper to iterate over sim-specific parameters
 def sim_runner(input_bundle: SimulationBundle) -> SimulationBundle:
     """
@@ -97,6 +99,7 @@ def summarize_sims(df: pl.DataFrame) -> pl.DataFrame:
         }
     )
     return metrics
+
 
 ## ======================================#
 ## Running the experiment---

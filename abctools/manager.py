@@ -29,7 +29,7 @@ def call_experiment(
     sampler_method: str - Method to draw simulation parameters
     runner: function - Function to run the simulation
     summarizer: function - Function to summarize the simulation outputs from the sim bundle results
-    
+
     Returns SimulationBundle object
     """
 
