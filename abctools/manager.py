@@ -14,6 +14,22 @@ def call_experiment(
     """
     Overall wrapper function to take in pipeline workflow as dictionary and relevant conditions as a config path
 
+    Required Inputs:
+    config: str - Path to configuration file
+    experiment_mode: str - Mode of experiment to run defined by user
+    write: tuple - Tuple of strings to specify which outputs to write
+        current acceptable inputs are "summaries" and "simulations"
+
+    Optional Inputs:
+    project_seed: int - Seed for stochastic simulations
+    wd: str - Working directory for experiment
+    initializer: function - Function to initialize baseline parameters
+    bundle: SimulationBundle - Bundle object to iniate the experiment
+    random_sampler: dict - Dictionary of distributions to draw simulation parameters
+    sampler_method: str - Method to draw simulation parameters
+    runner: function - Function to run the simulation
+    summarizer: function - Function to summarize the simulation outputs from the sim bundle results
+    
     Returns SimulationBundle object
     """
 
@@ -117,7 +133,7 @@ def call_experiment(
                 simulations_dict=init_bundle.writer_input_dict,
                 azure_batch=azure_batch,
                 azure_client=client,
-                blob_container_name=blob_container_name
+                blob_container_name=blob_container_name,
             )
 
     # Running simulations if specified
@@ -125,37 +141,49 @@ def call_experiment(
         if azure_batch:
             raise NotImplementedError("Azure Batch not yet implemented")
         else:
-            init_bundle = kwargs["runner"](
-                input_bundle=init_bundle
-            )
-        
+            init_bundle = kwargs["runner"](input_bundle=init_bundle)
+
             if "summarizer" in kwargs:
                 init_bundle.calculate_summary_metrics(
                     summary_function=kwargs["summarizer"]
                 )
-            
+
             for sub_dir in write:
                 path_name = os.path.join(dir, experiment_mode, sub_dir)
                 if sub_dir == "simulations":
                     if init_bundle.results is None:
                         raise ValueError("No simulation results to write")
                     else:
-                        for sim_number, sim_data in init_bundle.results.items():
-                            file_name = os.path.join(path_name, f"simulation_{sim_number}", "data.csv")
+                        for (
+                            sim_number,
+                            sim_data,
+                        ) in init_bundle.results.items():
+                            file_name = os.path.join(
+                                path_name,
+                                f"simulation_{sim_number}",
+                                "data.csv",
+                            )
                             sim_data.write_csv(file_name)
                 elif sub_dir == "summaries":
                     if init_bundle.summary_metrics is None:
                         raise ValueError("No summary metrics to write")
                     else:
-                        for sim_number, sim_data in init_bundle.summary_metrics.items():
-                            file_name = os.path.join(path_name, f"simulation_{sim_number}", "report.csv")
+                        for (
+                            sim_number,
+                            sim_data,
+                        ) in init_bundle.summary_metrics.items():
+                            file_name = os.path.join(
+                                path_name,
+                                f"simulation_{sim_number}",
+                                "report.csv",
+                            )
                             if isinstance(sim_data, pl.DataFrame):
                                 sim_data.write_csv(file_name)
                             else:
-                                raise ValueError("Returned summary metrics must be a DataFrame")
+                                raise ValueError(
+                                    "Returned summary metrics must be a DataFrame"
+                                )
                 else:
                     raise ValueError("Invalid write option")
-                        
-                    
 
     return init_bundle
