@@ -9,7 +9,7 @@ from abctools.abc_classes import SimulationBundle
 
 
 def call_experiment(
-    config: str, experiment_mode: str, protocol=(), **kwargs
+    config: str, experiment_mode: str, write=(), **kwargs
 ) -> SimulationBundle:
     """
     Overall wrapper function to take in pipeline workflow as dictionary and relevant conditions as a config path
@@ -105,51 +105,57 @@ def call_experiment(
     else:
         dir = "."
 
-    if "subwd" in kwargs:
-        sub_dir = kwargs["subwd"]
-    else:
-        sub_dir = "simulations"
-
     # Making specified folders to house simulations if writing
-    if "write" in protocol:
-        wrappers.gcm_experiments_writer(
-            experiments_dir=dir,
-            super_experiment_name=experiment_mode,
-            sub_experiment_name=sub_dir,
-            simulations_dict=init_bundle.writer_input_dict,
-            azure_batch=azure_batch,
-            azure_client=client,
-            blob_container_name=blob_container_name,
-        )
+    if len(write) > 0:
+        if "preserve" not in kwargs:
+            wrappers.delete_experiment_items(dir, experiment_mode, "")
+        for sub_dir in write:
+            wrappers.gcm_experiments_writer(
+                experiments_dir=dir,
+                super_experiment_name=experiment_mode,
+                sub_experiment_name=sub_dir,
+                simulations_dict=init_bundle.writer_input_dict,
+                azure_batch=azure_batch,
+                azure_client=client,
+                blob_container_name=blob_container_name
+            )
 
     # Running simulations if specified
-    if "run" in protocol:
-        if "write" not in protocol:
-            raise ValueError(
-                "Cannot currently run simulations without writing directories."
-            )
-        elif "runner" not in kwargs:
-            raise ValueError("No simulation runner specified.")
+    if "runner" in kwargs:
+        if azure_batch:
+            raise NotImplementedError("Azure Batch not yet implemented")
         else:
-            if "store_sims" in kwargs:
-                store = kwargs["store_sims"]
-            else:
-                store = True
-
-            if "cores" in kwargs:
-                num_processes = kwargs["cores"]
-            else:
-                num_processes = 0
-
-            path_name = os.path.join(dir, experiment_mode, sub_dir)
-
-            # Example - non function atm
             init_bundle = kwargs["runner"](
-                init_bundle=init_bundle,
-                directory=path_name,
-                store_sims=store,
-                azure_batch=azure_batch,
-                num_processes=num_processes,
+                input_bundle=init_bundle
             )
+        
+            if "summarizer" in kwargs:
+                init_bundle.calculate_summary_metrics(
+                    summary_function=kwargs["summarizer"]
+                )
+            
+            for sub_dir in write:
+                path_name = os.path.join(dir, experiment_mode, sub_dir)
+                if sub_dir == "simulations":
+                    if init_bundle.results is None:
+                        raise ValueError("No simulation results to write")
+                    else:
+                        for sim_number, sim_data in init_bundle.results.items():
+                            file_name = os.path.join(path_name, f"simulation_{sim_number}", "data.csv")
+                            sim_data.write_csv(file_name)
+                elif sub_dir == "summaries":
+                    if init_bundle.summary_metrics is None:
+                        raise ValueError("No summary metrics to write")
+                    else:
+                        for sim_number, sim_data in init_bundle.summary_metrics.items():
+                            file_name = os.path.join(path_name, f"simulation_{sim_number}", "report.csv")
+                            if isinstance(sim_data, pl.DataFrame):
+                                sim_data.write_csv(file_name)
+                            else:
+                                raise ValueError("Returned summary metrics must be a DataFrame")
+                else:
+                    raise ValueError("Invalid write option")
+                        
+                    
 
     return init_bundle
