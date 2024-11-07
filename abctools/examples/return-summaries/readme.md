@@ -22,3 +22,11 @@ The user defines a `sim_runner` function that is accepted asthea callable input 
 The `summarizer` input then takes a user-specified function to return `DataFrame`s from the simulated outputs, even if they are not printed to an output directory.
 
 Finally, the manager then returns the `SimulationBundle` object for further analysis.
+
+## Execution
+Run the example from the terminal based in the main project directory
+
+```console
+poetry install
+poetry run python abctools/examples/return-summaries/main.py
+```
