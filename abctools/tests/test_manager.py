@@ -8,7 +8,6 @@ from abctools.abc_classes import SimulationBundle
 
 # from scipy.stats import uniform
 
-
 ## ======================================#
 ## Bundle creation tests---
 ## ======================================#
@@ -53,6 +52,7 @@ def test_empty_bundle(empty_bundle, manual_bundle):
 
 
 def test_passed_bundle(fixed_seed, manual_bundle):
+    original_status = manual_bundle.status
     copied_bundle = manager.call_experiment(
         config="empty_config",
         experiment_mode="generate_seed",
@@ -63,7 +63,8 @@ def test_passed_bundle(fixed_seed, manual_bundle):
     assert_frame_equal(copied_bundle.inputs, manual_bundle.inputs)
     assert copied_bundle.baseline_params == manual_bundle.baseline_params
     assert copied_bundle.step_number == manual_bundle.step_number
-    assert copied_bundle.status != manual_bundle.status
+    assert copied_bundle.status != original_status
+    assert manual_bundle.status == "duplicated"
 
 
 ## ======================================#
