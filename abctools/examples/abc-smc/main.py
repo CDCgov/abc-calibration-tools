@@ -1,3 +1,5 @@
+from random import uniform
+
 import polars as pl
 from gcm_python_wrappers import wrappers
 
@@ -15,6 +17,11 @@ prior_sampler_distros = {
     "infectiousPeriod": abc_methods.get_truncated_normal(
         mean=4, sd=2.5, low=0.01, upp=25
     ),
+}
+
+perturbation_kernels = {
+    "averageContactsPerDay": uniform(-0.05, 0.1),
+    "infectiousPeriod": uniform(-0.1, 0.2),
 }
 
 
@@ -122,14 +129,12 @@ def distance_difference(df: pl.DataFrame, target_data: pl.DataFrame) -> float:
 dir = "./abctools/examples/abc-smc"
 wrappers.delete_experiment_items(dir, "", "")
 
-tolerance = [
-    500,
-    250,
-    100,
-    50,
-    20,
-    10000,
-]
+tolerance = [500, 250]
+
+n_init = 100
+seed = 12345
+
+n_steps = len(tolerance)
 
 ## ======================================#
 ## Generate target---
@@ -147,29 +152,68 @@ target_bundle = manager.call_experiment(
 )
 
 ## ======================================#
-## Generate first bundle---
+## Generate simulation bundles---
 ## ======================================#
-n_init = 1000
-seed = 12345
+weights = None
+prev_accepted = None
 
+for step_number in range(n_steps):
+    # Make new bundle or resample
+    if step_number == 0:
+        sample_bundle = manager.call_experiment(
+            config="./abctools/examples/abc-smc/config.yaml",
+            experiment_mode="draw_samples",
+            write=["simulations", "summaries"],
+            project_seed=seed,
+            wd=dir,
+            random_sampler=prior_sampler_distros,
+            sampler_method="sobol",
+            runner=sim_runner,
+            summarizer=summarize_sims,
+            replicates=n_init,
+        )
+    else:
+        sample_bundle = manager.call_experiment(
+            config="./abctools/examples/abc-smc/config.yaml",
+            experiment_mode="resample",
+            write=["simulations", "summaries"],
+            project_seed=seed,
+            wd=dir,
+            random_sampler=prior_sampler_distros,
+            perturbation=perturbation_kernels,
+            bundle=sample_bundle,
+            runner=sim_runner,
+            summarizer=summarize_sims,
+            replicates=n_init,
+        )
+    sample_bundle.step_number = step_number
 
-sample_bundle = manager.call_experiment(
-    config="./abctools/examples/abc-smc/config.yaml",
-    experiment_mode="draw_samples",
-    write=["simulations", "summaries"],
-    project_seed=seed,
-    wd=dir,
-    random_sampler=prior_sampler_distros,
-    sampler_method="sobol",
-    runner=sim_runner,
-    summarizer=summarize_sims,
-    replicates=n_init,
-)
+    # Cacluate distance scores
+    sample_bundle.calculate_distances(
+        target_data=target_bundle.summary_metrics[0],
+        distance_function=distance_difference,
+        use_summary_metrics=True,
+    )
 
-sample_bundle.calculate_distances(
-    target_data=target_bundle.summary_metrics[0],
-    distance_function=distance_difference,
-    use_summary_metrics=True,
-)
+    # Accept scores based on tolerance array
+    sample_bundle.accept_reject(tolerance[step_number])
 
-sample_bundle.accept_reject()
+    # Calculate new weights based on accepted scores and previous weights
+    if weights is not None:
+        weights = abc_methods.calculate_weights(
+            sample_bundle.accepted,
+            prev_accepted,
+            weights,
+            prior_sampler_distros,
+            perturbation_kernels,
+            normalize=True,
+        )
+    else:
+        weights = {
+            key: 1 / len(sample_bundle.accepted)
+            for key in sample_bundle.accepted
+        }
+
+    # Update bundle with new weights and step number
+    prev_accepted = sample_bundle.accepted
+    sample_bundle.weights = weights
