@@ -1,7 +1,5 @@
-from random import uniform
-
 import polars as pl
-from gcm_python_wrappers import wrappers
+from scipy.stats import uniform
 
 from abctools import abc_methods, manager, toy_model
 from abctools.abc_classes import SimulationBundle
@@ -118,7 +116,16 @@ def distance_difference(df: pl.DataFrame, target_data: pl.DataFrame) -> float:
     # Concatenate data frames and caclualte difference
     diff = df - target_data
 
-    sum_distance = sum(diff / target_data)
+    normalized_distance = diff / target_data
+    sum_distance = (
+        normalized_distance.with_columns(
+            sum=abs(
+                pl.sum_horizontal("time_to_peak_infection", "total_infected")
+            )
+        )
+        .select(pl.col("sum"))
+        .item()
+    )
 
     return sum_distance
 
@@ -127,7 +134,7 @@ def distance_difference(df: pl.DataFrame, target_data: pl.DataFrame) -> float:
 ## Setup environment---
 ## ======================================#
 dir = "./abctools/examples/abc-smc"
-wrappers.delete_experiment_items(dir, "", "")
+# wrappers.delete_experiment_items(dir, "", "") # This line deletes the whole subdirectory
 
 tolerance = [500, 250]
 
@@ -186,7 +193,6 @@ for step_number in range(n_steps):
             summarizer=summarize_sims,
             replicates=n_init,
         )
-    sample_bundle.step_number = step_number
 
     # Cacluate distance scores
     sample_bundle.calculate_distances(
@@ -200,7 +206,7 @@ for step_number in range(n_steps):
 
     # Calculate new weights based on accepted scores and previous weights
     if weights is not None:
-        weights = abc_methods.calculate_weights(
+        weights = abc_methods.calculate_weights_abcsmc(
             sample_bundle.accepted,
             prev_accepted,
             weights,
