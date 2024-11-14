@@ -148,8 +148,10 @@ def call_experiment(
 
     # Making specified folders to house simulations if writing
     if len(write) > 0:
-        if "preserve" not in kwargs:
-            wrappers.delete_experiment_items(dir, experiment_mode, "")
+        if "delete_existing" not in kwargs:
+            delete_existing = True
+        else:
+            delete_existing = kwargs["delete_existing"]
         for sub_dir in write:
             wrappers.gcm_experiments_writer(
                 experiments_dir=dir,
@@ -159,6 +161,7 @@ def call_experiment(
                 azure_batch=azure_batch,
                 azure_client=client,
                 blob_container_name=blob_container_name,
+                delete_existing=delete_existing,
             )
 
     # Running simulations if specified

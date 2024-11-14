@@ -136,7 +136,7 @@ def distance_difference(df: pl.DataFrame, target_data: pl.DataFrame) -> float:
 dir = "./abctools/examples/abc-smc"
 # wrappers.delete_experiment_items(dir, "", "") # This line deletes the whole subdirectory
 
-tolerance = [500, 250]
+tolerance = [500, 250, 100]
 
 n_init = 100
 seed = 12345
@@ -169,7 +169,7 @@ for step_number in range(n_steps):
     if step_number == 0:
         sample_bundle = manager.call_experiment(
             config="./abctools/examples/abc-smc/config.yaml",
-            experiment_mode="draw_samples",
+            experiment_mode="sample",
             write=["simulations", "summaries"],
             project_seed=seed,
             wd=dir,
@@ -182,7 +182,7 @@ for step_number in range(n_steps):
     else:
         sample_bundle = manager.call_experiment(
             config="./abctools/examples/abc-smc/config.yaml",
-            experiment_mode="resample",
+            experiment_mode="sample",
             write=["simulations", "summaries"],
             project_seed=seed,
             wd=dir,
@@ -192,6 +192,7 @@ for step_number in range(n_steps):
             runner=sim_runner,
             summarizer=summarize_sims,
             replicates=n_init,
+            delete_existing=False,
         )
 
     # Cacluate distance scores
