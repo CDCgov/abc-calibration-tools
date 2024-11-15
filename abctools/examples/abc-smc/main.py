@@ -1,3 +1,6 @@
+import os
+
+import matplotlib.pyplot as plt
 import polars as pl
 from scipy.stats import uniform
 
@@ -136,9 +139,9 @@ def distance_difference(df: pl.DataFrame, target_data: pl.DataFrame) -> float:
 dir = "./abctools/examples/abc-smc"
 # wrappers.delete_experiment_items(dir, "", "") # This line deletes the whole subdirectory
 
-tolerance = [500, 250, 100]
+tolerance = [5, 1, 0.25, 0.05]
 
-n_init = 100
+n_init = 1000
 seed = 12345
 
 n_steps = len(tolerance)
@@ -163,6 +166,7 @@ target_bundle = manager.call_experiment(
 ## ======================================#
 weights = None
 prev_accepted = None
+stored_bundles = {}
 
 for step_number in range(n_steps):
     # Make new bundle or resample
@@ -224,3 +228,34 @@ for step_number in range(n_steps):
     # Update bundle with new weights and step number
     prev_accepted = sample_bundle.accepted
     sample_bundle.weights = weights
+    stored_bundles[step_number] = sample_bundle
+
+## ======================================#
+## Generate final figures---
+## ======================================#
+fig_dir = os.path.join(dir, "figures")
+if not os.path.exists(fig_dir):
+    os.makedirs(fig_dir)
+
+for experiment_param in sample_bundle.experiment_params:
+    # Store target value for vertical line
+    fig, axs = plt.subplots(n_steps, 1)
+    vline_val = target_bundle.baseline_params["baseScenario"][experiment_param]
+
+    # Iterate over steps and plot histograms
+    for step_number, bundle_j in stored_bundles.items():
+        axs[step_number].hist(
+            bundle_j.inputs[experiment_param], bins=50, alpha=0.5
+        )
+        axs[step_number].axvline(x=vline_val, color="red", linestyle="--")
+        axs[step_number].set_xlabel(experiment_param)
+        axs[step_number].set_ylabel("Frequency")
+
+    # PLot per experiment parameter
+    file_out = os.path.join(
+        fig_dir,
+        f"{experiment_param}_hist.jpg",
+    )
+
+    fig.savefig(file_out)
+    plt.close(fig)
