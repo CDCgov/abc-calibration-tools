@@ -1,3 +1,5 @@
+import random
+
 import polars as pl
 import pytest
 from polars.testing import assert_frame_equal, assert_series_equal
@@ -62,9 +64,10 @@ def test_passed_bundle(fixed_seed, manual_bundle):
 
     assert_frame_equal(copied_bundle.inputs, manual_bundle.inputs)
     assert copied_bundle.baseline_params == manual_bundle.baseline_params
-    assert copied_bundle.step_number == manual_bundle.step_number
+    assert copied_bundle.step_number == manual_bundle.step_number + 1
     assert copied_bundle.status != original_status
-    assert manual_bundle.status == "duplicated"
+    assert copied_bundle.status == "duplicated"
+    assert manual_bundle.status == original_status
 
 
 ## ======================================#
@@ -77,7 +80,7 @@ def empty_random_bundle():
     bundle = abc_manager.call_experiment(
         config="empty_config",
         experiment_mode="generate_seed",
-        project_seed=None,
+        project_seed=random.randint(0, 2**32 - 1),
         initializer=initialize_baseline,
     )
     yield bundle

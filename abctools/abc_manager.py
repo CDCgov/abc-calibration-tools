@@ -9,7 +9,7 @@ from abctools.abc_classes import SimulationBundle
 
 
 def call_experiment(
-    config: str, experiment_mode: str, write=(), **kwargs
+    config: str, experiment_mode: str, scenario_key="baseScenario", **kwargs
 ) -> SimulationBundle:
     """
     Overall wrapper function to take in pipeline workflow as dictionary and relevant conditions as a config path
@@ -33,15 +33,28 @@ def call_experiment(
     Returns SimulationBundle object
     """
 
+    # read in which write options are specified in config
+    if "writeOutput" in config:
+        write = config["writeOutput"]
+        write = {k: store for k, store in write.items() if store}
+    else:
+        write = []
+
     # Seed for stochastic simulations. Set to None to draw randomly
     if "project_seed" in kwargs:
         if kwargs["project_seed"] is not None:
             seed = kwargs["project_seed"]
             # This should write to config
         else:
-            raise ValueError("Random seed is None. Make new seed using random.randint(0, 2**32 - 1) and write manually.")
+            raise ValueError(
+                "Random seed is None. Make new seed using random.randint(0, 2**32 - 1) and write manually."
+            )
+    elif config[scenario_key]["randomSeed"] is not None:
+        seed = config[scenario_key]["randomSeed"]
     else:
-        raise ValueError("Random seed not specified. Use project_seed to set.")
+        raise ValueError(
+            "Random seed not specified. Use project_seed in kwargs or randomSeed in config to set."
+        )
 
     baseline_params_input = {}
 
@@ -54,7 +67,7 @@ def call_experiment(
         # Should write a YAML to config if not already present
     else:
         baseline_params, summary_string = utils.load_baseline_params(
-            config, baseline_params_input
+            config, baseline_params_input, scenario_key
         )
 
     # Set up Azure client if defined
