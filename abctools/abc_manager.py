@@ -16,11 +16,10 @@ def call_experiment(
     Required Inputs:
     config: str - Path to configuration file
     experiment_name: str - Mode of experiment to run defined by user
-    write: tuple - Tuple of strings to specify which outputs to write
-        current acceptable inputs are "summaries" and "simulations"
+    scenario: str - Scenario to run from the configuration file
 
     Optional Inputs:
-    project_seed: int - Seed for stochastic simulations
+    project_seed: int - Seed for stochastic simulations if not specified in the scenario
     wd: str - Working directory for experiment
     initializer: function - Function to initialize baseline parameters
     bundle: SimulationBundle - Bundle object to iniate the experiment
@@ -39,6 +38,7 @@ def call_experiment(
         scenario_key="writeOutput",
     )
 
+    # Filter out false write options
     write = {
         k: store for k, store in write_dict["writeOutput"].items() if store
     }
