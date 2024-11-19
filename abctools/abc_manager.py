@@ -1,5 +1,4 @@
 import os
-import random
 
 import polars as pl
 from gcm_python_wrappers import utils, wrappers
@@ -9,14 +8,14 @@ from abctools.abc_classes import SimulationBundle
 
 
 def call_experiment(
-    config: str, experiment_mode: str, scenario: str ="baseScenario", **kwargs
+    config: str, experiment_name: str, scenario: str = "baseScenario", **kwargs
 ) -> SimulationBundle:
     """
     Overall wrapper function to take in pipeline workflow as dictionary and relevant conditions as a config path
 
     Required Inputs:
     config: str - Path to configuration file
-    experiment_mode: str - Mode of experiment to run defined by user
+    experiment_name: str - Mode of experiment to run defined by user
     write: tuple - Tuple of strings to specify which outputs to write
         current acceptable inputs are "summaries" and "simulations"
 
@@ -35,12 +34,14 @@ def call_experiment(
 
     # read in which write options are specified in config
     write_dict, write_str = utils.load_baseline_params(
-        default_params_file=config, 
-        baseline_params_input={}, 
-        scenario_key="writeOutput"
+        default_params_file=config,
+        baseline_params_input={},
+        scenario_key="writeOutput",
     )
 
-    write = {k: store for k, store in write_dict['writeOutput'].items() if store}
+    write = {
+        k: store for k, store in write_dict["writeOutput"].items() if store
+    }
 
     # Seed for stochastic simulations. Set to None to draw randomly
     if "project_seed" in kwargs:
@@ -69,9 +70,9 @@ def call_experiment(
         # Should write a YAML to config if not already present
     else:
         baseline_params, summary_str = utils.load_baseline_params(
-            default_params_file=config, 
-            baseline_params_input=baseline_params_input, 
-            scenario_key=scenario
+            default_params_file=config,
+            baseline_params_input=baseline_params_input,
+            scenario_key=scenario,
         )
 
     # Set up Azure client if defined
@@ -83,7 +84,7 @@ def call_experiment(
             client,
             blob_container_name,
             job_prefix,
-        ) = utils.initialize_azure_client(config, experiment_mode, create_pool)
+        ) = utils.initialize_azure_client(config, experiment_name, create_pool)
 
         if client and blob_container_name and job_prefix:
             print("Azure Client initialized successfully.")
@@ -168,7 +169,7 @@ def call_experiment(
         for sub_dir in write:
             wrappers.gcm_experiments_writer(
                 experiments_dir=dir,
-                super_experiment_name=experiment_mode,
+                super_experiment_name=experiment_name,
                 sub_experiment_name=sub_dir,
                 simulations_dict=product_bundle.writer_input_dict,
                 azure_batch=azure_batch,
@@ -190,7 +191,7 @@ def call_experiment(
                 )
 
             for sub_dir in write:
-                path_name = os.path.join(dir, experiment_mode, sub_dir)
+                path_name = os.path.join(dir, experiment_name, sub_dir)
                 if sub_dir == "simulations":
                     if product_bundle.results is None:
                         raise ValueError("No simulation results to write")
