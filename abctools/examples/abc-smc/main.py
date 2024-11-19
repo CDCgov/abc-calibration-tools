@@ -157,8 +157,7 @@ n_steps = len(tolerance)
 target_seed = 1234
 target_bundle = abc_manager.call_experiment(
     config="./abctools/examples/abc-smc/config.yaml",
-    experiment_mode="generate_target",
-    write=["simulations", "summaries"],
+    experiment_name="generate_target",
     project_seed=target_seed,
     wd=dir,
     runner=sim_runner,
@@ -177,8 +176,7 @@ for step_number in range(n_steps):
     if step_number == 0:
         sample_bundle = abc_manager.call_experiment(
             config="./abctools/examples/abc-smc/config.yaml",
-            experiment_mode="sample",
-            write=["simulations", "summaries"],
+            experiment_name="sample",
             project_seed=seed,
             wd=dir,
             random_sampler=prior_sampler_distros,
@@ -190,8 +188,7 @@ for step_number in range(n_steps):
     else:
         sample_bundle = abc_manager.call_experiment(
             config="./abctools/examples/abc-smc/config.yaml",
-            experiment_mode="sample",
-            write=["simulations", "summaries"],
+            experiment_name="sample",
             project_seed=seed,
             wd=dir,
             random_sampler=prior_sampler_distros,

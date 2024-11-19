@@ -107,7 +107,7 @@ def summarize_sims(df: pl.DataFrame) -> pl.DataFrame:
 
 experiment_bundle = abc_manager.call_experiment(
     config="./abctools/examples/return-summaries/config.yaml",
-    experiment_mode="summarize",
+    experiment_name="summarize",
     project_seed=seed,
     wd="./abctools/examples/return-summaries",
     random_sampler=prior_sampler_distros,
