@@ -9,7 +9,7 @@ from abctools.abc_classes import SimulationBundle
 
 
 def call_experiment(
-    config: str, experiment_mode: str, scenario_key="baseScenario", **kwargs
+    config: str, experiment_mode: str, scenario: str ="baseScenario", **kwargs
 ) -> SimulationBundle:
     """
     Overall wrapper function to take in pipeline workflow as dictionary and relevant conditions as a config path
@@ -34,11 +34,13 @@ def call_experiment(
     """
 
     # read in which write options are specified in config
-    if "writeOutput" in config:
-        write = config["writeOutput"]
-        write = {k: store for k, store in write.items() if store}
-    else:
-        write = []
+    write_dict, write_str = utils.load_baseline_params(
+        default_params_file=config, 
+        baseline_params_input={}, 
+        scenario_key="writeOutput"
+    )
+
+    write = {k: store for k, store in write_dict['writeOutput'].items() if store}
 
     # Seed for stochastic simulations. Set to None to draw randomly
     if "project_seed" in kwargs:
@@ -49,8 +51,8 @@ def call_experiment(
             raise ValueError(
                 "Random seed is None. Make new seed using random.randint(0, 2**32 - 1) and write manually."
             )
-    elif config[scenario_key]["randomSeed"] is not None:
-        seed = config[scenario_key]["randomSeed"]
+    elif config[scenario]["randomSeed"] is not None:
+        seed = config[scenario]["randomSeed"]
     else:
         raise ValueError(
             "Random seed not specified. Use project_seed in kwargs or randomSeed in config to set."
@@ -66,8 +68,10 @@ def call_experiment(
         baseline_params = kwargs["bundle"].baseline_params
         # Should write a YAML to config if not already present
     else:
-        baseline_params, summary_string = utils.load_baseline_params(
-            config, baseline_params_input, scenario_key
+        baseline_params, summary_str = utils.load_baseline_params(
+            default_params_file=config, 
+            baseline_params_input=baseline_params_input, 
+            scenario_key=scenario
         )
 
     # Set up Azure client if defined
