@@ -2,16 +2,16 @@
 This example is for a simple ABC-SMC routine with few parmaeters in a toy stochastic SIR model, emulating the test of `abc_classes` provided through `test_abc_pipeline.py`
 
 ### Running the example
-This example can be run by using 
+This example can be run by using
 ```shell
 poetry run python abctools/examples/abc-smc/main.py
 ```
 
 # Workflow
 ## User-defined functions
-The script takes in a user-defined set of functions that determine how the parameters are drawn, how the models are run, and where simulations are stored. The first section of user-defined functions specifies how to collect simulations, how to collect summary metrics, and the rules for drawing parmaeters 
+The script takes in a user-defined set of functions that determine how the parameters are drawn, how the models are run, and where simulations are stored. The first section of user-defined functions specifies how to collect simulations, how to collect summary metrics, and the rules for drawing parmaeters
 
-Parameters are drawn during the first (`prior_sampler_distros`) and subsequent (`perturbation_kernels`) rounds of ABC-SMC. 
+Parameters are drawn during the first (`prior_sampler_distros`) and subsequent (`perturbation_kernels`) rounds of ABC-SMC.
 The `toy_model` function uses these drawn parameters and a base set is defined for generating a single simulation and `sim_runner` is defined to collect multiple simulations and store them as the results value of a SimulationBundle object. The results are then summarized by the `summarize_sims` function. These summary metrics are then compared to some target summary metrics through the `distance_difference` function.
 
 ## Environment and Target

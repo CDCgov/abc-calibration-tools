@@ -3,7 +3,7 @@ import pytest
 from polars.testing import assert_frame_equal, assert_series_equal
 
 # from abctools import abc_methods, manager, plot_utils, toy_model
-from abctools import manager
+from abctools import abc_manager
 from abctools.abc_classes import SimulationBundle
 
 # from scipy.stats import uniform
@@ -24,7 +24,7 @@ def fixed_seed():
 
 @pytest.fixture
 def empty_bundle(fixed_seed):
-    empty_bundle = manager.call_experiment(
+    empty_bundle = abc_manager.call_experiment(
         config="empty_config",
         experiment_mode="generate_seed",
         project_seed=fixed_seed,
@@ -53,7 +53,7 @@ def test_empty_bundle(empty_bundle, manual_bundle):
 
 def test_passed_bundle(fixed_seed, manual_bundle):
     original_status = manual_bundle.status
-    copied_bundle = manager.call_experiment(
+    copied_bundle = abc_manager.call_experiment(
         config="empty_config",
         experiment_mode="generate_seed",
         project_seed=fixed_seed,
@@ -74,7 +74,7 @@ def test_passed_bundle(fixed_seed, manual_bundle):
 
 @pytest.fixture
 def empty_random_bundle():
-    bundle = manager.call_experiment(
+    bundle = abc_manager.call_experiment(
         config="empty_config",
         experiment_mode="generate_seed",
         project_seed=None,
@@ -93,7 +93,7 @@ def test_seed_notfixed(random_seed, fixed_seed):
 
 
 def test_randomseed_pass(random_seed):
-    fixed_bundle = manager.call_experiment(
+    fixed_bundle = abc_manager.call_experiment(
         config="empty_config",
         experiment_mode="generate_seed",
         project_seed=random_seed[0],

@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import polars as pl
 from scipy.stats import uniform
 
-from abctools import abc_methods, manager, toy_model
+from abctools import abc_manager, abc_methods, toy_model
 from abctools.abc_classes import SimulationBundle
 
 ## ======================================#
@@ -94,7 +94,9 @@ def sim_runner(input_bundle: SimulationBundle) -> SimulationBundle:
 
 # Summary function to return peak time and total number infected
 def summarize_sims(df: pl.DataFrame) -> pl.DataFrame:
-    """User-defined function to calculate infection metrics, in this case time to peak infection and total infected"""
+    """
+    User-defined function to calculate infection metrics, in this case time to peak infection and total infected
+    """
     # Find the time of peak infection (first instance, if multiple)
     time_to_peak_infection = (
         df.sort("infected", descending=True).select(pl.first("time"))
@@ -115,7 +117,9 @@ def summarize_sims(df: pl.DataFrame) -> pl.DataFrame:
 
 # Difference function for distance calculation
 def distance_difference(df: pl.DataFrame, target_data: pl.DataFrame) -> float:
-    """User-defined distance function to calculate the difference between simulation and target data"""
+    """
+    User-defined distance function to calculate the difference between simulation and target data
+    """
     # Concatenate data frames and caclualte difference
     diff = df - target_data
 
@@ -151,7 +155,7 @@ n_steps = len(tolerance)
 ## ======================================#
 
 target_seed = 1234
-target_bundle = manager.call_experiment(
+target_bundle = abc_manager.call_experiment(
     config="./abctools/examples/abc-smc/config.yaml",
     experiment_mode="generate_target",
     write=["simulations", "summaries"],
@@ -171,7 +175,7 @@ stored_bundles = {}
 for step_number in range(n_steps):
     # Make new bundle or resample
     if step_number == 0:
-        sample_bundle = manager.call_experiment(
+        sample_bundle = abc_manager.call_experiment(
             config="./abctools/examples/abc-smc/config.yaml",
             experiment_mode="sample",
             write=["simulations", "summaries"],
@@ -184,7 +188,7 @@ for step_number in range(n_steps):
             replicates=n_init,
         )
     else:
-        sample_bundle = manager.call_experiment(
+        sample_bundle = abc_manager.call_experiment(
             config="./abctools/examples/abc-smc/config.yaml",
             experiment_mode="sample",
             write=["simulations", "summaries"],
@@ -249,6 +253,7 @@ for experiment_param in sample_bundle.experiment_params:
         )
         axs[step_number].axvline(x=vline_val, color="red", linestyle="--")
         axs[step_number].set_xlabel(experiment_param)
+        axs[step_number].set_xlim((0, 12))
         axs[step_number].set_ylabel("Frequency")
 
     # PLot per experiment parameter

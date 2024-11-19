@@ -6,6 +6,10 @@
 
 This repo provides flexible tools to calibrate models using approximate Bayesian computation (ABC) methods, including variant methods such as ABC-SMC. ABC methods are typically computationally intensive, but have the advantage of not requiring an explicit likelihood function.
 
+## Examples
+
+Examples located in the `abctools/examples` directory provide simple implementations of ABC and data manipulation, along with usage of wrapper functions. Tests of these examples can be found in the `abctools/tests` directory.
+
 ## Project Admin
 
 Chris Valleau, MPH, pwl3@cdc.gov, CDC/IOD/ORR/CFA

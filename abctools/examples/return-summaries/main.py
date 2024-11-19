@@ -1,7 +1,7 @@
 import polars as pl
 
 # from abctools import abc_methods, manager, plot_utils, toy_model
-from abctools import abc_methods, manager, toy_model
+from abctools import abc_manager, abc_methods, toy_model
 from abctools.abc_classes import SimulationBundle
 
 seed = 1234
@@ -105,7 +105,7 @@ def summarize_sims(df: pl.DataFrame) -> pl.DataFrame:
 ## Running the experiment---
 ## ======================================#
 
-experiment_bundle = manager.call_experiment(
+experiment_bundle = abc_manager.call_experiment(
     config="./abctools/examples/return-summaries/config.yaml",
     experiment_mode="summarize",
     write=["simulations", "summaries"],

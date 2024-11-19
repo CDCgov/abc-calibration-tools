@@ -39,13 +39,9 @@ def call_experiment(
             seed = kwargs["project_seed"]
             # This should write to config
         else:
-            seed = random.randint(0, 2**32 - 1)
-    elif experiment_mode == "test":
-        # This seed should be preempted with attempt to be read from config
-        print("Test mode selected without seed. Defaulting to 0")
-        seed = 0
+            raise ValueError("Random seed is None. Make new seed using random.randint(0, 2**32 - 1) and write manually.")
     else:
-        raise ValueError("Random seed not specified")
+        raise ValueError("Random seed not specified. Use project_seed to set.")
 
     baseline_params_input = {}
 
