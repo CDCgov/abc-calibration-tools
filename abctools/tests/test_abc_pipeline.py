@@ -329,22 +329,20 @@ class TestABCPipeline(unittest.TestCase):
                 f"Collate accepted simulations, step #{step_number}"
             ):
                 # Collate results from distance calculations
-                sim_bundle.collate_accepted()
+                sim_bundle.collate_accept_results()
 
                 # Ensure the accepted logical column is present
-                self.assertIn(
-                    "accepted_sim", sim_bundle.accept_results.columns
-                )
+                self.assertIn("accept_bool", sim_bundle.accept_results.columns)
 
                 # Ensure the sum of TRUE counts in logical column is the number of accepted sims
                 self.assertEqual(
-                    sim_bundle.accept_results["accepted_sim"].sum(),
+                    sim_bundle.accept_results["accept_bool"].sum(),
                     sim_bundle.n_accepted,
                 )
 
                 # Check that distance values with accepted_sim == True are less than or equal to tolerance
                 accept_above_max = sim_bundle.accept_results.filter(
-                    pl.col("accepted_sim")
+                    pl.col("accept_bool")
                 ).filter(pl.col("distance") > self.tolerance[step_number])
 
                 self.assertTrue(accept_above_max.is_empty())

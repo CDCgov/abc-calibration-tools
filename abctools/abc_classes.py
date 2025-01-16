@@ -332,37 +332,39 @@ class SimulationBundle:
             # Store parameters of accepted simulations in an attribute for later use or analysis
             self.accepted[sim_number] = accepted_params
 
-    def collate_accepted(self):
+    def collate_accept_results(self):
         """
-        Collates all accepted simulations into a single DataFrame for further analysis or processing.
-
+        Makes a single DataFrame attribute from ABC results of accepted, distance, and inputs.
+        Args:
+            self
         Returns:
-            accepted_df (pl.DataFrame): A DataFrame containing all accepted simulations.
+            None
+        Raises:
+            ValueError: if accept is not previously calculated
         """
 
-        # Check if any simulations have been accepted
+        # Ensure accept is already calculated
         if not hasattr(self, "accepted"):
-            raise ValueError("Accepted simulations have not been stored.")
+            raise ValueError("Accept has not been calculated.")
 
-        # Dummy mapper to join distances with inputs
+        # Dummy mapper to join distances and accept with inputs
         mapper = pl.DataFrame(
             {
-                "simulation": list(int(k) for k in self.distances.keys()),
-                "distance": list(self.distances.values()),
+                "simulation": self.distances.keys(),
+                "distance": self.distances.values(),
             }
         )
 
-        # Joining distances with inputs
-        accept_results = self.inputs.join(mapper, on="simulation", how="inner")
-
-        # Adding logical column whether an input is accepted
-        accepted_sims = list(int(k) for k in self.accepted.keys())
-        accept_results = accept_results.with_columns(
-            pl.col("simulation").is_in(accepted_sims).alias("accepted_sim")
+        # Joining results with inputs
+        distance_results = self.inputs.join(
+            mapper, on="simulation", how="left"
         )
 
-        # Store the collated DataFrame in an attribute for later use or analysis
-        self.accept_results = accept_results
+        # Adding logical column whether an input was accepted and storing as self attribute
+        accepted_sims = list(int(k) for k in self.accepted.keys())
+        self.accept_results = distance_results.with_columns(
+            pl.col("simulation").is_in(accepted_sims).alias("accept_bool")
+        )
 
     def merge_with(self, other_bundle):
         """
