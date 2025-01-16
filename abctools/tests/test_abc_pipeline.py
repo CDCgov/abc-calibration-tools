@@ -6,7 +6,8 @@ import matplotlib.pyplot as plt
 import polars as pl
 from scipy.stats import uniform
 
-from abctools import abc_classes, abc_methods, plot_utils, toy_model
+from abctools import abc_methods, plot_utils, toy_model
+from abctools.abc_classes import SimulationBundle
 
 # Set random seed
 random_seed = 12345
@@ -205,7 +206,7 @@ class TestABCPipeline(unittest.TestCase):
             print(f"Step {step_number}, trying {len(input_df)} samples")
 
             # Create the simulation bundle for the current step
-            sim_bundle = abc_classes.SimulationBundle(
+            sim_bundle = SimulationBundle(
                 inputs=input_df,
                 step_number=step_number,
                 baseline_params=self.baseline_params,
@@ -285,7 +286,7 @@ class TestABCPipeline(unittest.TestCase):
                     )
 
                     # Create additional SimulationBundle (will be merged into the current step's sim_bundle once evaluated)
-                    additional_sim_bundle = abc_classes.SimulationBundle(
+                    additional_sim_bundle = SimulationBundle(
                         inputs=additional_input_df,
                         step_number=step_number,
                         baseline_params=self.baseline_params,
@@ -332,18 +333,18 @@ class TestABCPipeline(unittest.TestCase):
 
                 # Ensure the accepted logical column is present
                 self.assertIn(
-                    "accepted_sim", sim_bundle.accept_results.columns
+                    "accepted_bool", sim_bundle.accept_results.columns
                 )
 
                 # Ensure the sum of TRUE counts in logical column is the number of accepted sims
                 self.assertEqual(
-                    sim_bundle.accept_results["accepted_sim"].sum(),
+                    sim_bundle.accept_results["accept_bool"].sum(),
                     sim_bundle.n_accepted,
                 )
 
                 # Check that distance values with accepted_sim == True are less than or equal to tolerance
                 accept_above_max = sim_bundle.accept_results.filter(
-                    pl.col("accepted_sim")
+                    pl.col("accept_bool")
                 ).filter(pl.col("distance") > self.tolerance[step_number])
 
                 self.assertTrue(accept_above_max.is_empty())

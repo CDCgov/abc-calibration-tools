@@ -335,13 +335,10 @@ class SimulationBundle:
     def collate_accept_results(self):
         """
         Makes a single DataFrame attribute from ABC results of accepted, distance, and inputs.
-
         Args:
             self
-
         Returns:
             None
-
         Raises:
             ValueError: if accept is not previously calculated
         """
@@ -349,20 +346,20 @@ class SimulationBundle:
         # Ensure accept is already calculated
         if not hasattr(self, "accepted"):
             raise ValueError("Accept has not been calculated.")
-
+        
         # Ensure accepted and distances have same simulation order
         if not (self.accepted.keys() == self.distances.keys()):
             reshuffle_accept = {
-                k: self.accepted[k] for k in list(self.distances.keys())
-            }
-            self.accepted = reshuffle_accept
+            k: self.accepted[k] for k in list(self.distances.keys())
+        }
+        self.accepted = reshuffle_accept
 
         # Dummy mapper to join distances and accept with inputs
         mapper = pl.DataFrame(
-            {
-                "simulation": list(int(k) for k in self.distances.keys()),
-                "distance": list(self.distances.values()),
-            }
+        {
+            "simulation": list(int(k) for k in self.distances.keys()),
+            "distance": list(self.distances.values()),
+        }
         )
 
         # Joining results with inputs
@@ -373,7 +370,7 @@ class SimulationBundle:
         accept_results = accept_results.with_columns(
             pl.col("simulation").is_in(accepted_sims).alias("accept_bool")
         )
-
+        
         # Store parameters in a DataFrame attribute for later analysis and diagnostics
         self.accept_results = accept_results
 
