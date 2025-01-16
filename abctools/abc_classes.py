@@ -4,6 +4,7 @@ import pickle
 import polars as pl
 
 
+
 class SimulationBundle:
     """
     A class to keep track of an iteration/generation of simulations (particles)
@@ -332,19 +333,32 @@ class SimulationBundle:
             # Store parameters of accepted simulations in an attribute for later use or analysis
             self.accepted[sim_number] = accepted_params
 
-    def collate_accepted(self):
+    def collate_accept_results(self):
         """
-        Collates all accepted simulations into a single DataFrame for further analysis or processing.
+        Makes a single DataFrame attribute from ABC results of accepted, distance, and inputs.
+
+        Args:
+            self
 
         Returns:
-            accepted_df (pl.DataFrame): A DataFrame containing all accepted simulations.
+            None
+
+        Raises:
+            ValueError: if accept is not previously calculated
         """
 
-        # Check if any simulations have been accepted
+        # Ensure accept is already calculated
         if not hasattr(self, "accepted"):
-            raise ValueError("Accepted simulations have not been stored.")
+            raise ValueError("Accept has not been calculated.")
 
-        # Dummy mapper to join distances with inputs
+        # Ensure accepted and distances have same simulation order
+        if not (self.accepted.keys() == self.distances.keys()):
+            reshuffle_accept = {
+                k: self.accepted[k] for k in list(self.distances.keys())
+            }
+            self.accepted = reshuffle_accept
+
+        # Dummy mapper to join distances and accept with inputs
         mapper = pl.DataFrame(
             {
                 "simulation": list(int(k) for k in self.distances.keys()),
@@ -352,16 +366,16 @@ class SimulationBundle:
             }
         )
 
-        # Joining distances with inputs
-        accept_results = self.inputs.join(mapper, on="simulation", how="inner")
+        # Joining results with inputs
+        accept_results = self.inputs.join(mapper, on="simulation", how="left")
 
-        # Adding logical column whether an input is accepted
+        # Adding logical column whether an input was accepted
         accepted_sims = list(int(k) for k in self.accepted.keys())
         accept_results = accept_results.with_columns(
-            pl.col("simulation").is_in(accepted_sims).alias("accepted_sim")
+            pl.col("simulation").is_in(accepted_sims).alias("accept_bool")
         )
 
-        # Store the collated DataFrame in an attribute for later use or analysis
+        # Store parameters in a DataFrame attribute for later analysis and diagnostics
         self.accept_results = accept_results
 
     def merge_with(self, other_bundle):

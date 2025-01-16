@@ -6,8 +6,7 @@ import matplotlib.pyplot as plt
 import polars as pl
 from scipy.stats import uniform
 
-from abctools import abc_methods, plot_utils, toy_model
-from abctools.abc_classes import SimulationBundle
+from abctools import abc_classes, abc_methods, plot_utils, toy_model
 
 # Set random seed
 random_seed = 12345
@@ -206,7 +205,7 @@ class TestABCPipeline(unittest.TestCase):
             print(f"Step {step_number}, trying {len(input_df)} samples")
 
             # Create the simulation bundle for the current step
-            sim_bundle = SimulationBundle(
+            sim_bundle = abc_classes.SimulationBundle(
                 inputs=input_df,
                 step_number=step_number,
                 baseline_params=self.baseline_params,
@@ -286,7 +285,7 @@ class TestABCPipeline(unittest.TestCase):
                     )
 
                     # Create additional SimulationBundle (will be merged into the current step's sim_bundle once evaluated)
-                    additional_sim_bundle = SimulationBundle(
+                    additional_sim_bundle = abc_classes.SimulationBundle(
                         inputs=additional_input_df,
                         step_number=step_number,
                         baseline_params=self.baseline_params,
@@ -329,7 +328,7 @@ class TestABCPipeline(unittest.TestCase):
                 f"Collate accepted simulations, step #{step_number}"
             ):
                 # Collate results from distance calculations
-                sim_bundle.collate_accepted()
+                sim_bundle.collate_accept_results()
 
                 # Ensure the accepted logical column is present
                 self.assertIn(
