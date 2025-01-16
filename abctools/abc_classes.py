@@ -4,7 +4,6 @@ import pickle
 import polars as pl
 
 
-
 class SimulationBundle:
     """
     A class to keep track of an iteration/generation of simulations (particles)
