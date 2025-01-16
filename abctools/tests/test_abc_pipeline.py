@@ -332,9 +332,7 @@ class TestABCPipeline(unittest.TestCase):
                 sim_bundle.collate_accept_results()
 
                 # Ensure the accepted logical column is present
-                self.assertIn(
-                    "accepted_bool", sim_bundle.accept_results.columns
-                )
+                self.assertIn("accept_bool", sim_bundle.accept_results.columns)
 
                 # Ensure the sum of TRUE counts in logical column is the number of accepted sims
                 self.assertEqual(

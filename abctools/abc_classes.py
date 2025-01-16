@@ -346,33 +346,25 @@ class SimulationBundle:
         # Ensure accept is already calculated
         if not hasattr(self, "accepted"):
             raise ValueError("Accept has not been calculated.")
-        
-        # Ensure accepted and distances have same simulation order
-        if not (self.accepted.keys() == self.distances.keys()):
-            reshuffle_accept = {
-            k: self.accepted[k] for k in list(self.distances.keys())
-        }
-        self.accepted = reshuffle_accept
 
         # Dummy mapper to join distances and accept with inputs
         mapper = pl.DataFrame(
-        {
-            "simulation": list(int(k) for k in self.distances.keys()),
-            "distance": list(self.distances.values()),
-        }
+            {
+                "simulation": self.distances.keys(),
+                "distance": self.distances.values(),
+            }
         )
 
         # Joining results with inputs
-        accept_results = self.inputs.join(mapper, on="simulation", how="left")
+        distance_results = self.inputs.join(
+            mapper, on="simulation", how="left"
+        )
 
-        # Adding logical column whether an input was accepted
+        # Adding logical column whether an input was accepted and storing as self attribute
         accepted_sims = list(int(k) for k in self.accepted.keys())
-        accept_results = accept_results.with_columns(
+        self.accept_results = distance_results.with_columns(
             pl.col("simulation").is_in(accepted_sims).alias("accept_bool")
         )
-        
-        # Store parameters in a DataFrame attribute for later analysis and diagnostics
-        self.accept_results = accept_results
 
     def merge_with(self, other_bundle):
         """
