@@ -475,6 +475,9 @@ class SimulationBundle:
         # Merge accepted simulations dictionaries directly
         self.accepted.update(other_bundle.accepted)
 
+        # Merge acceptance weights dictionaries directly
+        self.acceptance_weights.update(other_bundle.acceptance_weights)
+
         # Record the merge event in the history
         current_merge_index = len(self.merge_history) + 1
         number_merged = len(other_bundle.inputs)
