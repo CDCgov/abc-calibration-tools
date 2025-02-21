@@ -379,7 +379,6 @@ class SimulationBundle:
         self.accepted = {}
         self.acceptance_weights = {}
 
-
         # Accept only the top-performing simulations as determined by the specified proportion
         for sim_number, distance in sorted_simulations[:num_to_accept]:
             # Retrieve and clean input parameters for each accepted simulation
