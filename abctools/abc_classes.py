@@ -270,6 +270,7 @@ class SimulationBundle:
 
         # Initialize accepted simulations dictionary
         self.accepted = {}
+        self.acceptance_weights = {}
 
         # Iterate over simulations and accept those within tolerance
         for sim_number, distance in self.distances.items():
@@ -285,6 +286,7 @@ class SimulationBundle:
 
                 # Add filtered parameters to the dictionary of accepted simulations
                 self.accepted[sim_number] = accepted_params
+                self.acceptance_weights[sim_number] = 1.0
 
     def accept_stochastic(self, tolerance):
         """
@@ -375,6 +377,8 @@ class SimulationBundle:
 
         # Initialize/clear accepted simulations dictionary
         self.accepted = {}
+        self.acceptance_weights = {}
+
 
         # Accept only the top-performing simulations as determined by the specified proportion
         for sim_number, distance in sorted_simulations[:num_to_accept]:
@@ -389,6 +393,7 @@ class SimulationBundle:
 
             # Store parameters of accepted simulations in an attribute for later use or analysis
             self.accepted[sim_number] = accepted_params
+            self.acceptance_weights[sim_number] = 1.0
 
     def collate_accept_results(self):
         """

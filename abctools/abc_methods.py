@@ -216,6 +216,7 @@ def calculate_weights_abcsmc(
     current_accepted,
     prev_step_accepted,
     prev_weights,
+    stochastic_acceptance_weights,
     prior_distributions,
     perturbation_kernels,
     normalize=True,
@@ -270,7 +271,7 @@ def calculate_weights_abcsmc(
         weight = numerator / denominator if denominator != 0 else 0
 
         # Store calculated weight
-        new_weights[sim_number] = weight
+        new_weights[sim_number] = weight * stochastic_acceptance_weights[sim_number]
 
     if normalize:
         # Normalize weights so they sum up to 1
