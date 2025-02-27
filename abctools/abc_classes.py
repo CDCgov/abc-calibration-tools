@@ -321,7 +321,7 @@ class SimulationBundle:
         )
 
         # Group by parameters besides simulation and random seed
-        particle_prop_accepted = distances_accepted.groupby(
+        particle_prop_accepted = distances_accepted.group_by(
             self.inputs.drop(["simulation", "randomSeed"]).columns
         ).agg(
             pl.col("accepted_bool").mean().alias("acceptance_weight"),
