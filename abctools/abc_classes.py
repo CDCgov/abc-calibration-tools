@@ -270,6 +270,7 @@ class SimulationBundle:
 
         # Initialize accepted simulations dictionary
         self.accepted = {}
+        self.acceptance_weights = {}
 
         # Iterate over simulations and accept those within tolerance
         for sim_number, distance in self.distances.items():
@@ -285,6 +286,65 @@ class SimulationBundle:
 
                 # Add filtered parameters to the dictionary of accepted simulations
                 self.accepted[sim_number] = accepted_params
+                self.acceptance_weights[sim_number] = 1.0
+
+    def accept_stochastic(self, tolerance):
+        """
+        Accepts simulations and returns the proportion of simulations accepted for each parameter set
+
+        Args:
+            tolerance (float): The tolerance level for accepting simulations.
+
+        Returns:
+            None
+
+        Raises:
+            ValueError: If distances have not been previously calculated.
+        """
+
+        if not hasattr(self, "distances"):
+            raise ValueError("Distances have not been calculated.")
+
+        self.acceptance_weights = {}
+        self.accepted = {}
+        # Determine accepted particles and seeds
+        distances_accepted = pl.from_dict(
+            {
+                "simulation": self.distances.keys(),
+                "distance": self.distances.values(),
+            }
+        ).with_columns(
+            pl.col("distance")
+            .le(tolerance)
+            .cast(pl.Int8)
+            .alias("accepted_bool"),
+        )
+
+        # Group by parameters besides simulation and random seed
+        particle_prop_accepted = distances_accepted.groupby(
+            self.inputs.drop(["simulation", "randomSeed"]).columns
+        ).agg(
+            pl.col("accepted_bool").mean().alias("acceptance_weight"),
+            pl.col("simulation").min().alias("simulation"),
+        )
+
+        # filter particles with accepted count > 0
+        particle_prop_accepted = particle_prop_accepted.filter(
+            pl.col("acceptance_weight") > 0
+        )
+
+        # Create acceptance weights (to be included in the weights assignment) and params dict
+        for row in particle_prop_accepted.rows(named=True):
+            self.acceptance_weights.update(
+                {row["simulation"]: row["acceptance_weight"]}
+            )
+            self.accepted.update(
+                {
+                    row["simulation"]: self.inputs.filter(
+                        pl.col("simulation") == row["simulation"]
+                    ).drop(["simulation", "randomSeed"])
+                }
+            )
 
     def accept_proportion(self, proportion):
         """
@@ -317,6 +377,7 @@ class SimulationBundle:
 
         # Initialize/clear accepted simulations dictionary
         self.accepted = {}
+        self.acceptance_weights = {}
 
         # Accept only the top-performing simulations as determined by the specified proportion
         for sim_number, distance in sorted_simulations[:num_to_accept]:
@@ -331,6 +392,7 @@ class SimulationBundle:
 
             # Store parameters of accepted simulations in an attribute for later use or analysis
             self.accepted[sim_number] = accepted_params
+            self.acceptance_weights[sim_number] = 1.0
 
     def collate_accept_results(self):
         """
@@ -412,6 +474,9 @@ class SimulationBundle:
 
         # Merge accepted simulations dictionaries directly
         self.accepted.update(other_bundle.accepted)
+
+        # Merge acceptance weights dictionaries directly
+        self.acceptance_weights.update(other_bundle.acceptance_weights)
 
         # Record the merge event in the history
         current_merge_index = len(self.merge_history) + 1

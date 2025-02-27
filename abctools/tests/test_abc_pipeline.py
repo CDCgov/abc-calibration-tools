@@ -173,7 +173,7 @@ class TestABCPipeline(unittest.TestCase):
                 with self.subTest("Initialize Samples"):
                     input_df = abc_methods.draw_simulation_parameters(
                         params_inputs=self.experiment_params_prior_dist,
-                        n_simulations=self.n_init,
+                        n_parameter_sets=self.n_init,
                         add_random_seed=self.stochastic,
                         seed=random_seed,
                     )
@@ -187,6 +187,7 @@ class TestABCPipeline(unittest.TestCase):
                         input_df = abc_methods.resample(
                             sim_bundles[step_number - 1].accepted,
                             n_samples=self.n_init,
+                            replicates_per_sample=1,
                             perturbation_kernels=self.perturbation_kernels,
                             prior_distributions=self.experiment_params_prior_dist,
                             weights=sim_bundles[step_number - 1].weights,
@@ -198,6 +199,7 @@ class TestABCPipeline(unittest.TestCase):
                         input_df = abc_methods.resample(
                             sim_bundles[step_number - 1].accepted,
                             n_samples=self.n_init,
+                            replicates_per_sample=1,
                             weights=sim_bundles[step_number - 1].weights,
                             seed=random_seed,
                         )
@@ -265,7 +267,7 @@ class TestABCPipeline(unittest.TestCase):
                     if step_number == 0:
                         additional_input_df = abc_methods.draw_simulation_parameters(
                             params_inputs=self.experiment_params_prior_dist,
-                            n_simulations=n_additional,
+                            n_parameter_sets=n_additional,
                             add_random_seed=self.stochastic,
                             starting_simulation_number=sim_bundle.n_simulations,
                             seed=random_seed,
@@ -350,19 +352,23 @@ class TestABCPipeline(unittest.TestCase):
             with self.subTest(f"Calculate weights, step #{step_number}"):
                 if step_number == 0:
                     # uniform weights on the initial step
-                    weights = {
-                        key: 1 / len(sim_bundle.accepted)
-                        for key in sim_bundle.accepted
-                    }
+                    weights = {}
+                    for key in sim_bundle.accepted:
+                        weights[key] = sim_bundle.acceptance_weights[
+                            key
+                        ] / len(sim_bundle.accepted)
                 else:
                     prev_step_accepted = sim_bundles[step_number - 1].accepted
                     prev_step_weights = sim_bundles[step_number - 1].weights
+                    accept_ratio_weights = sim_bundle.acceptance_weights
+
                     weights = abc_methods.calculate_weights_abcsmc(
-                        sim_bundle.accepted,
-                        prev_step_accepted,
-                        prev_step_weights,
-                        self.experiment_params_prior_dist,
-                        self.perturbation_kernels,
+                        current_accepted=sim_bundle.accepted,
+                        prev_step_accepted=prev_step_accepted,
+                        prev_weights=prev_step_weights,
+                        stochastic_acceptance_weights=accept_ratio_weights,
+                        prior_distributions=self.experiment_params_prior_dist,
+                        perturbation_kernels=self.perturbation_kernels,
                         normalize=True,
                     )
 

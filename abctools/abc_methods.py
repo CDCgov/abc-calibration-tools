@@ -8,24 +8,26 @@ from scipy.stats import qmc, truncnorm
 
 def draw_simulation_parameters(
     params_inputs: dict,
-    n_simulations: int,
+    n_parameter_sets: int,
     method: str = "sobol",
     add_random_seed: bool = True,
     add_simulation_id: bool = True,
     starting_simulation_number: int = 0,
     seed=None,
+    replicates_per_particle=1,
 ) -> pl.DataFrame:
     """
     Draw samples of parameters for simulations based on the specified method.
 
     Args:
         params_inputs (dict): Dictionary containing parameters and their distributions.
-        n_simulations (int): Number of simulations to perform.
+        n_parameter_sets (int): Number of simulations to perform.
         method (str): Sampling method ("random", "sobol", or "latin_hypercube").
         add_random_seed (bool): If True, adds a 'randomSeed' column with randomly generated numbers.
         add_simulation_id (bool): If True, adds a 'simulation' column with simulation IDs starting from `starting_simulation_number`.
         starting_simulation_number (int): The number at which to start numbering simulations. Defaults to 0.
         seed (int): Random seed passed in to ensure consistency between runs.
+        replicates_per_particle (int): Number of replicates to generate per parameter set.
 
     Returns:
         pd.DataFrame: DataFrame containing arrays of sampled values for each parameter,
@@ -40,7 +42,7 @@ def draw_simulation_parameters(
     if method == "random":
         # Random sampling for each distribution
         samples = {
-            param_key: dist_obj.rvs(size=n_simulations)
+            param_key: dist_obj.rvs(size=n_parameter_sets)
             for param_key, dist_obj in params_inputs.items()
         }
 
@@ -55,7 +57,7 @@ def draw_simulation_parameters(
         )
 
         # Generate uniform samples across all dimensions
-        uniform_samples = sampler.random(n=n_simulations)
+        uniform_samples = sampler.random(n=n_parameter_sets)
 
         # Transform uniform samples using ppf for each distribution
         samples_transformed = np.column_stack(
@@ -75,7 +77,10 @@ def draw_simulation_parameters(
         raise ValueError(f"Unsupported sampling method: {method}")
 
     # Convert to Polars DataFrame
-    simulation_parameters_df = pl.DataFrame(samples)
+    n_simulations = n_parameter_sets * replicates_per_particle
+    simulation_parameters_df = pl.DataFrame(samples).select(
+        pl.all().repeat_by(replicates_per_particle).flatten()
+    )
 
     if add_random_seed:
         # Add a random seed column with integers between 0 and 2^32 - 1
@@ -86,7 +91,7 @@ def draw_simulation_parameters(
             pl.Series("randomSeed", seed_column)
         )
 
-    # If specified, add a simulation ID column with integers from `starting_simulation_number` to `starting_simulation_number + n_simulations - 1`
+    # If specified, add a simulation ID column with integers from `starting_simulation_number` to `starting_simulation_number + n_parameter_sets - 1`
     if add_simulation_id:
         # Generate sequence using arange and offset by the starting number
         simulation_id_sequence = np.arange(
@@ -109,6 +114,7 @@ def draw_simulation_parameters(
 def resample(
     accepted_simulations,
     n_samples,
+    replicates_per_sample=1,
     perturbation_kernels=None,
     prior_distributions=None,
     weights=None,
@@ -122,6 +128,7 @@ def resample(
     Args:
         accepted_simulations (dict): Dictionary of Polar DataFrames or dictionaries of accepted simulations with parameters.
         n_samples (int): Number of additional samples to generate.
+        replicates_per_sample (int): Number of replicates to generate per sample.
         perturbation_kernels (dict): Dictionary of perturbation kernels for each parameter.
         prior_distributions (dict): Dictionary of prior distributions for each parameter.
         weights (dict or None): Optional dictionary of weights for each accepted simulation. If None, uniform weighting is assumed.
@@ -191,20 +198,27 @@ def resample(
 
         new_samples.append(selected_params)
 
+    n_simulations = n_samples * replicates_per_sample
+    resampled_df = pl.DataFrame(new_samples).select(
+        pl.all().repeat_by(replicates_per_sample).flatten()
+    )
+
     # Convert list of dictionaries to Polars DataFrame and add 'simulation' column starting at desired number
-    resampled_df = pl.DataFrame(new_samples).with_columns(
+    resampled_df = resampled_df.with_columns(
         pl.Series(
             "simulation",
             np.arange(
                 starting_simulation_number,
-                starting_simulation_number + n_samples,
+                starting_simulation_number + n_simulations,
             ),
         )
     )
 
     if add_random_seed:
         # Add a random seed column with integers between 0 and 2^32 - 1
-        seed_column = [random.randint(0, 2**32) for _ in range(n_samples)]
+        seed_column = [
+            random.randint(0, 2**32) for _ in range(n_simulations)
+        ]
         resampled_df = resampled_df.with_columns(
             pl.Series("randomSeed", seed_column)
         )
@@ -216,6 +230,7 @@ def calculate_weights_abcsmc(
     current_accepted,
     prev_step_accepted,
     prev_weights,
+    stochastic_acceptance_weights,
     prior_distributions,
     perturbation_kernels,
     normalize=True,
@@ -270,7 +285,9 @@ def calculate_weights_abcsmc(
         weight = numerator / denominator if denominator != 0 else 0
 
         # Store calculated weight
-        new_weights[sim_number] = weight
+        new_weights[sim_number] = (
+            weight * stochastic_acceptance_weights[sim_number]
+        )
 
     if normalize:
         # Normalize weights so they sum up to 1
