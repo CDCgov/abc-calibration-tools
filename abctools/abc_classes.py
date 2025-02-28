@@ -288,9 +288,13 @@ class SimulationBundle:
                 self.accepted[sim_number] = accepted_params
                 self.acceptance_weights[sim_number] = 1.0
 
-    def accept_stochastic(self, tolerance):
+    def accept_stochastic(
+        self,
+        tolerance,
+    ):
         """
-        Accepts simulations and returns the proportion of simulations accepted for each parameter set
+        Accepts the minimum simulation of each parameter set with greater than zero replicates under the tolerance level
+        Sets the acceptance_weight proportion for each parameter set
 
         Args:
             tolerance (float): The tolerance level for accepting simulations.
@@ -305,26 +309,14 @@ class SimulationBundle:
         if not hasattr(self, "distances"):
             raise ValueError("Distances have not been calculated.")
 
-        self.acceptance_weights = {}
-        self.accepted = {}
-        # Determine accepted particles and seeds
-        distances_accepted = pl.from_dict(
-            {
-                "simulation": self.distances.keys(),
-                "distance": self.distances.values(),
-            }
-        ).with_columns(
-            pl.col("distance")
-            .le(tolerance)
-            .cast(pl.Int8)
-            .alias("accepted_bool"),
-        )
+        self.accept_reject(tolerance)
+        self.collate_accept_results()
 
         # Group by parameters besides simulation and random seed
-        particle_prop_accepted = distances_accepted.groupby(
+        particle_prop_accepted = self.accept_results.group_by(
             self.inputs.drop(["simulation", "randomSeed"]).columns
         ).agg(
-            pl.col("accepted_bool").mean().alias("acceptance_weight"),
+            pl.col("accept_bool").mean().alias("acceptance_weight"),
             pl.col("simulation").min().alias("simulation"),
         )
 
@@ -333,6 +325,8 @@ class SimulationBundle:
             pl.col("acceptance_weight") > 0
         )
 
+        self.acceptance_weights = {}
+        self.accepted = {}
         # Create acceptance weights (to be included in the weights assignment) and params dict
         for row in particle_prop_accepted.rows(named=True):
             self.acceptance_weights.update(

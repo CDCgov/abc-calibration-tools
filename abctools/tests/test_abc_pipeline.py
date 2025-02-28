@@ -242,9 +242,9 @@ class TestABCPipeline(unittest.TestCase):
                     self.assertGreaterEqual(distance, 0)
 
             with self.subTest(
-                f"Accept or Reject Simulations, step #{step_number}"
+                f"Accept or Reject Simulations through accept_stochastic, step #{step_number}"
             ):
-                sim_bundle.accept_reject(self.tolerance[step_number])
+                sim_bundle.accept_stochastic(self.tolerance[step_number])
 
                 # Ensure at least one simulation is accepted
                 self.assertGreaterEqual(len(sim_bundle.accepted), 1)
@@ -312,7 +312,7 @@ class TestABCPipeline(unittest.TestCase):
                     )
 
                     # Accept or reject the additional simulations based on tolerance criteria
-                    additional_sim_bundle.accept_reject(
+                    additional_sim_bundle.accept_stochastic(
                         self.tolerance[step_number]
                     )
 
