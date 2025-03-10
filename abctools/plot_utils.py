@@ -1,7 +1,9 @@
 import os
+
 import matplotlib.pyplot as plt
-from abc_classes.py import SimulationBundle
 import polars as pl
+
+from abctools.abc_classes import SimulationBundle
 
 
 def duplicate_weights_dataframe(
@@ -40,7 +42,7 @@ def marginal_posterior_plot(
     )
 
     bundle_data = sim_bundle.accept_results
-
+    alpha = max(0.1, 1 - (len(sim_bundle.accept_results) / 200))
     filename = "marginal_pairs.jpg"
     file_out = os.path.join(fig_path, filename)
 
@@ -53,7 +55,7 @@ def marginal_posterior_plot(
                 ax_lwr.scatter(
                     bundle_data[comp_param],
                     bundle_data[experiment_param],
-                    alpha=0.05,
+                    alpha=alpha,
                 )
                 ax_lwr.set_xlabel(comp_param)
                 ax_lwr.set_ylabel(experiment_param)
@@ -66,7 +68,7 @@ def marginal_posterior_plot(
                 ax_upr.scatter(
                     bundle_data[experiment_param],
                     bundle_data[comp_param],
-                    alpha=0.05,
+                    alpha=alpha,
                 )
                 ax_upr.set_xlabel(experiment_param)
                 ax_upr.set_ylabel(comp_param)
@@ -94,8 +96,8 @@ def target_comparison_plot(
     sim_bundle: SimulationBundle,
     target_data: pl.DataFrame,
     fig_path: str,
-    x_col="day",
-    y_col="cumulative_cases",
+    x_col,
+    y_col,
     alpha_by_weight=True,
 ):
     duplicate_weights_dataframe(sim_bundle)
@@ -106,27 +108,30 @@ def target_comparison_plot(
     data_list = []
     for sim_id, df in sim_bundle.results.items():
         result = df.filter(
-            pl.col("day") <= target_data["day"].max()
+            pl.col(x_col) <= target_data[x_col].max()
         ).with_columns(pl.lit(sim_id).alias("simulation"))
         result = result.join(input_weights, on="simulation", how="left")
         data_list.append(result)
 
     # Label axes
-    xlabel = "Day"
-    ylabel = "Cumulative Ascertained Cases"
+    xlabel = x_col.replace("_", " ").capitalize()
+    ylabel = y_col.replace("_", " ").capitalize()
 
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
 
     for df in data_list:
         if alpha_by_weight:
-            plt.plot(df[x_col], df[y_col], color="blue", alpha=df["weight"][0])
+            plt.plot(
+                df[x_col], df[y_col], color="blue", alpha=(df["weight"][0] * 3)
+            )
         else:
+            alpha = max(0.1, 1 - (len(df.height) / 200))
             plt.plot(
                 df[x_col],
                 df[y_col],
                 color="blue",
-                alpha=0.05,
+                alpha=alpha,
             )
 
     plt.scatter(
