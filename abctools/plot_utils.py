@@ -148,7 +148,7 @@ def target_comparison_plot(
 
     file_out = os.path.join(
         fig_path,
-        f"cumulative_timeseries_{sim_bundle.step_number}.jpg",
+        f"timeseries_{sim_bundle.step_number}.jpg",
     )
     fig_simulations.savefig(file_out)
 
