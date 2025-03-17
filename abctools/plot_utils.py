@@ -6,32 +6,11 @@ import polars as pl
 from abctools.abc_classes import SimulationBundle
 
 
-def duplicate_weights_dataframe(
-    sim_bundle: SimulationBundle,
-):
-    weights_df = pl.from_dict(
-        {
-            "simulation": list(sim_bundle.weights.keys()),
-            "weight": list(sim_bundle.weights.values()),
-        }
-    )
-
-    sim_bundle.accept_results = (
-        sim_bundle.accept_results.join(weights_df, on="simulation", how="left")
-        .with_columns(pl.col("weight").fill_null(0))
-        .with_columns(
-            pl.col("weight")
-            .max()
-            .over(sim_bundle.inputs.drop(["simulation", "randomSeed"]).columns)
-            .alias("weight")
-        )
-    )
-
-
 def marginal_posterior_plot(
     sim_bundle: SimulationBundle,
     fig_path: str,
     log_scale: bool = True,
+    file_name: str = "marginal_pairs.jpg",
 ):
     n_parameters = len(sim_bundle.experiment_params)
     paired_fig, paired_axes = plt.subplots(
@@ -42,9 +21,8 @@ def marginal_posterior_plot(
     )
 
     bundle_data = sim_bundle.accept_results
-    alpha = max(0.1, 1 - (len(sim_bundle.accept_results) / 200))
-    filename = "marginal_pairs.jpg"
-    file_out = os.path.join(fig_path, filename)
+    alpha = min(1, (1.0 / len(sim_bundle.accept_results)) + 0.01)
+    file_out = os.path.join(fig_path, file_name)
 
     for row_idx, experiment_param in enumerate(sim_bundle.experiment_params):
         diag_ax = paired_axes[row_idx, row_idx]
@@ -98,9 +76,14 @@ def target_comparison_plot(
     fig_path: str,
     x_col,
     y_col,
+    x_lab: str = None,
+    y_lab: str = None,
+    file_name: str = None,
     alpha_by_weight=True,
 ):
-    duplicate_weights_dataframe(sim_bundle)
+    if file_name is None:
+        file_name = (f"timeseries_{sim_bundle.step_number}.jpg",)
+
     input_weights = sim_bundle.accept_results.filter(
         pl.col("simulation").is_in(sim_bundle.results.keys())
     )
@@ -114,19 +97,20 @@ def target_comparison_plot(
         data_list.append(result)
 
     # Label axes
-    xlabel = x_col.replace("_", " ").capitalize()
-    ylabel = y_col.replace("_", " ").capitalize()
+    if x_lab is None:
+        x_lab = x_col.replace("_", " ").capitalize()
+    if y_lab is None:
+        y_lab = y_col.replace("_", " ").capitalize()
 
-    plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
+    plt.xlabel(x_lab)
+    plt.ylabel(y_lab)
 
     for df in data_list:
         if alpha_by_weight:
-            plt.plot(
-                df[x_col], df[y_col], color="blue", alpha=(df["weight"][0] * 3)
-            )
+            alpha = min(1, (df["weight"][0] * 3))
+            plt.plot(df[x_col], df[y_col], color="blue", alpha=alpha)
         else:
-            alpha = max(0.1, 1 - (len(df.height) / 200))
+            alpha = min(1, (1.0 / df.height) + 0.01)
             plt.plot(
                 df[x_col],
                 df[y_col],
@@ -148,7 +132,7 @@ def target_comparison_plot(
 
     file_out = os.path.join(
         fig_path,
-        f"timeseries_{sim_bundle.step_number}.jpg",
+        file_name,
     )
     fig_simulations.savefig(file_out)
 
