@@ -4,7 +4,65 @@ import warnings
 import numpy as np
 import polars as pl
 from scipy.stats import qmc, truncnorm
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 
+def pca_transform(data, n_components=2):
+    """
+    Perform PCA on input data and return transformed data.
+
+    Args:
+        data (pd.DataFrame): Input data to transform.
+        n_components (int): Number of principal components to retain.
+
+    Returns:
+        PCA fit
+    """
+
+    # Standardize data
+    scaler = StandardScaler()
+    data_scaled = scaler.fit_transform(data)
+
+    # Perform PCA
+    pca = PCA(n_components=n_components)
+    principal_components = pca.fit_transform(data_scaled)
+    
+    return principal_components
+
+def perturbation_sample(n_samples: int, perturbation_kernel_dict: dict = None, weights = None, stddev = 0.1, seed: int = None):
+    """
+    Sample from a PCA model to generate new data points.
+
+    Args:
+        pca_model (sklearn.decomposition.PCA): Fitted PCA model.
+        n_samples (int): Number of samples to generate.
+        seed (int): Random seed passed in to ensure consistency between runs.
+
+    Returns:
+        pl.DataFrame: DataFrame containing n_samples samples generated from the PCA model.
+    """
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+        
+    
+    noise = np.random.normal(0, stddev, (n_samples, pca_model.n_components_))
+
+    # Generate random samples from a normal distribution
+    random_samples = np.random.normal(size=(n_samples, pca_model.n_components_))
+    
+    # Resampling loop
+    for _ in range(n_samples):
+        # Select a random index based on weights
+        chosen_index = random.choices(sim_numbers, weights=weights, k=1)[0]
+
+    # Transform random samples using the PCA model
+    generated_samples = pca_model.inverse_transform(random_samples)
+
+    # Convert to Polars DataFrame
+    generated_data = pl.DataFrame(generated_samples)
+
+    return generated_data
 
 def draw_simulation_parameters(
     params_inputs: dict,
@@ -129,7 +187,7 @@ def resample(
         accepted_simulations (dict): Dictionary of Polar DataFrames or dictionaries of accepted simulations with parameters.
         n_samples (int): Number of additional samples to generate.
         replicates_per_sample (int): Number of replicates to generate per sample.
-        perturbation_kernels (dict): Dictionary of perturbation kernels for each parameter.
+        perturbation_kernels (dict): Dictionary of perturbation kernels for each parameter. PCA correlated random walk if None.
         prior_distributions (dict): Dictionary of prior distributions for each parameter.
         weights (dict or None): Optional dictionary of weights for each accepted simulation. If None, uniform weighting is assumed.
         add_random_seed (bool): If True, adds a 'random_seed' column with randomly generated numbers.
@@ -155,6 +213,11 @@ def resample(
     else:
         sim_numbers = list(accepted_simulations.keys())
         weights = [1 / len(sim_numbers)] * len(sim_numbers)
+    
+    if perturbation_kernels is None:
+        print(accepted_simulations)
+        print(sdf)
+        pca_model = pca_transform(accepted_simulations, )
 
     # Resampling loop
     for _ in range(n_samples):
