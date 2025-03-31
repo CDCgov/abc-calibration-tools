@@ -56,19 +56,25 @@ def run_toy_model(params: dict):
 
 def run_experiment_sequence(
     simulations_df: pl.DataFrame, summary_function=None
-):
-    """Takes in Polars Dataframe of simulation (full) parameter data and outputs complete or summarized results from a stochastic SIR model"""
-    results_dict = {}
+) -> pl.DataFrame:
+    """Takes in Polars DataFrame of simulation (full) parameter data and outputs complete or summarized results from a stochastic SIR model"""
+    results_list = []
     for simulation_params in simulations_df.rows(named=True):
         results = run_toy_model(simulation_params)
 
         if summary_function:
             summarized_results = summary_function(results)
-            results_dict[simulation_params["simulation"]] = summarized_results
+            results_list.append({
+                "simulation": simulation_params["simulation"],
+                "summary_metrics": summarized_results
+            })
         else:
-            results_dict[simulation_params["simulation"]] = results
+            results_list.append({
+                "simulation": simulation_params["simulation"],
+                "results": results
+            })
 
-    return results_dict
+    return pl.DataFrame(results_list)
 
 
 def calculate_infection_metrics(df):
