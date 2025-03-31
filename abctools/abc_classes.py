@@ -14,7 +14,7 @@ class SimulationBundle:
         results (pl.DataFrame): Results for the simulations, initialized as an empty DataFrame.
         step_number (int): Keeps track of the ABC step (a.k.a. generation/iteration)
         baseline_params (dict): Unchanging parameters needed for the simulation
-        experiment_params (list): Calculated from 'inputs'--list of experiment parameter names
+        experiment_params (list): Derived from 'inputs'--list of experiment parameter names
         status (str): Current status in the ABC process
         distances (pl.DataFrame): Calculated distances from target
         accepted (pl.DataFrame): Accepted simulations with experiment parameters
@@ -47,24 +47,12 @@ class SimulationBundle:
         self.inputs = inputs
         self.status = status
         self.merge_history = {}
-        self.results = (
-            pl.DataFrame()
-        )  # Initialize results as an empty DataFrame
-        self.distances = (
-            pl.DataFrame()
-        )  # Initialize distances as an empty DataFrame
-        self.accepted = (
-            pl.DataFrame()
-        )  # Initialize accepted as an empty DataFrame
-        self.acceptance_weights = (
-            pl.DataFrame()
-        )  # Initialize acceptance_weights as an empty DataFrame
-        self.weights = (
-            pl.DataFrame()
-        )  # Initialize weights as an empty DataFrame
-        self.summary_metrics = (
-            pl.DataFrame()
-        )  # Initialize summary_metrics as an empty DataFrame
+        self.results = pl.DataFrame()
+        self.distances = pl.DataFrame()
+        self.accepted = pl.DataFrame()
+        self.acceptance_weights = pl.DataFrame()
+        self.weights = pl.DataFrame()
+        self.summary_metrics = pl.DataFrame()
 
         # Private variables
         self._step_number = step_number
@@ -158,9 +146,35 @@ class SimulationBundle:
             # Pickle only selected parts of the object and write it to file
             pickle.dump(self.__getstate__(), file)
 
+    def add_results(self, results_df, recover_params=True):
+        """
+        Adds results to the SimulationBundle object.
+
+        Args:
+            results_df (pl.DataFrame): The results DataFrame to be added.
+
+        Returns:
+            None
+        """
+        # Ensure results_df is a Polars DataFrame with all of the same values in the 'simulation' column as inputs
+        # Note: there may be more than one row per simulation in results_df
+        if not isinstance(results_df, pl.DataFrame):
+            raise TypeError("results_df must be a Polars DataFrame.")
+
+        if not results_df["simulation"].is_in(self.inputs["simulation"]).all():
+            raise ValueError(
+                "results_df must contain all simulation numbers from inputs."
+            )
+
+        # Recover params if applicable
+        if recover_params:
+            self.recover_params()
+
+        self.results = results_df
+
     def recover_params(self):
         """
-        Updates self.results by merging in columns from self.inputs onto self.results based on the 'simulation' and 'randomSeed' columns.
+        Updates self.results by merging in columns from self.inputs onto self.results based on the 'simulation' column.
 
         Returns:
             None
@@ -170,19 +184,13 @@ class SimulationBundle:
                 "self.results is not set. Cannot recover parameters without results."
             )
 
-        # Ensure results is a Polars DataFrame
-        if not isinstance(self.results, pl.DataFrame):
-            raise TypeError("self.results must be a Polars DataFrame.")
-
-        # Perform a left join to add input parameters to results based on 'simulation' and 'randomSeed'
+        # Perform a left join to add input parameters to results based on 'simulation'
         merged_results = self.results.join(
-            self.inputs, on=["simulation", "randomSeed"], how="left"
+            self.inputs, on=["simulation"], how="left"
         )
 
-        # Ensure the DataFrame is unique on 'simulation' and 'randomSeed'
-        merged_results = merged_results.unique(
-            subset=["simulation", "randomSeed"]
-        )
+        # Ensure the DataFrame is unique on 'simulation'
+        merged_results = merged_results.unique(subset=["simulation"])
 
         # Update self.results with merged data
         self.results = merged_results
@@ -202,7 +210,7 @@ class SimulationBundle:
 
         self.summary_metrics = pl.DataFrame()
 
-        grouped_results = self.results.groupby("simulation").apply(
+        grouped_results = self.results.group_by("simulation").apply(
             summary_function
         )
         for sim_number in grouped_results["simulation"]:
@@ -235,7 +243,7 @@ class SimulationBundle:
         # Calculate distances using the chosen data
         distances_list = []
 
-        for sim_number, sim_data in data_to_use.groupby("simulation"):
+        for sim_number, sim_data in data_to_use.group_by("simulation"):
             distance = distance_function(sim_data, target_data)
             distances_list.append(
                 {"simulation": sim_number, "distance": distance}
@@ -314,7 +322,7 @@ class SimulationBundle:
         self.collate_accept_results()
 
         # Group by parameters besides simulation and random seed
-        particle_prop_accepted = self.accept_results.groupby(
+        particle_prop_accepted = self.accept_results.group_by(
             self.inputs.drop(["simulation", "randomSeed"]).columns
         ).agg(
             pl.col("accept_bool").mean().alias("acceptance_weight"),
@@ -464,7 +472,7 @@ class SimulationBundle:
 
         # Merge results as DataFrames
         self.results = self.results.vstack(other_bundle.results).unique(
-            subset=["simulation", "randomSeed"]
+            subset=["simulation"]
         )
 
         # Merge distances DataFrames directly
