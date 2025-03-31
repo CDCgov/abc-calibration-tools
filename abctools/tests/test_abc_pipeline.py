@@ -215,9 +215,10 @@ class TestABCPipeline(unittest.TestCase):
             )
 
             with self.subTest(f"Run Model, step #{step_number}"):
-                sim_bundle.results = run_experiment_sequence(
+                results = run_experiment_sequence(
                     sim_bundle.full_params_df
                 )
+                sim_bundle.add_results(results)
                 self.assertEqual(len(sim_bundle.results), self.n_init)
                 self.assertIn("time", sim_bundle.results[0].columns)
                 self.assertIn("infected", sim_bundle.results[0].columns)
@@ -295,9 +296,10 @@ class TestABCPipeline(unittest.TestCase):
                     )
 
                     # Run model for additional simulations
-                    additional_sim_bundle.results = run_experiment_sequence(
+                    additional_results = run_experiment_sequence(
                         additional_sim_bundle.full_params_df
                     )
+                    additional_sim_bundle.add_results(additional_results)
 
                     # Calculate summary metrics for the additional simulations
                     additional_sim_bundle.calculate_summary_metrics(
