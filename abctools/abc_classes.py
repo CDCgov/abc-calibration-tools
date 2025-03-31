@@ -11,7 +11,7 @@ class SimulationBundle:
 
     Attributes:
         inputs (pl.DataFrame): Input parameters for the simulations.
-        results (pl.DataFrame or dict): Results for the simulations, initialized as None.
+        results (pl.DataFrame): Results for the simulations, initialized as an empty DataFrame.
         step_number (int): Keeps track of the ABC step (a.k.a. generation/iteration)
         baseline_params (dict): Unchanging parameters needed for the simulation
         experiment_params (list): Calculated from 'inputs'--list of experiment parameter names
@@ -20,6 +20,10 @@ class SimulationBundle:
         accepted (dict): Accepted simulations with experiment parameters
         n_accepted (int): Calculated from 'accepted'--number of accepted simulations
         weights (dict): Simulation weights for resampling
+        merge_history (dict): History of merges with other SimulationBundle objects
+        summary_metrics (dict): Summary metrics calculated for each simulation
+        acceptance_weights (dict): Weights for accepted simulations
+        accept_results (pl.DataFrame): DataFrame of acceptance results
     """
 
     def __init__(
@@ -44,6 +48,7 @@ class SimulationBundle:
         self.status = status
         self.merge_history = {}
         self.weights = None
+        self.results = pl.DataFrame()  # Initialize results as an empty DataFrame
 
         # Private variables
         self._step_number = step_number
@@ -139,10 +144,7 @@ class SimulationBundle:
 
     def recover_params(self):
         """
-        Updates self.results by merging in columns from self.inputs onto self.results based on the 'simulation' column.
-
-        If self.results is a Polars DataFrame, it performs a left join directly.
-        If self.results is a dictionary of Polars DataFrames, it performs the join for each simulation.
+        Updates self.results by merging in columns from self.inputs onto self.results based on the 'simulation' and 'randomSeed' columns.
 
         Returns:
             None
@@ -152,38 +154,22 @@ class SimulationBundle:
                 "self.results is not set. Cannot recover parameters without results."
             )
 
-        # Case 1: self.results is a single Polars DataFrame
-        if isinstance(self.results, pl.DataFrame):
-            # Perform a left join to add input parameters to results based on 'simulation'
-            merged_results = self.results.join(
-                self.inputs, on="simulation", how="left"
-            )
-
-            # Update self.results with merged data
-            self.results = merged_results
-
-        # Case 2: self.results is a dictionary of Polars DataFrames
-        elif isinstance(self.results, dict):
-            updated_results = {}
-
-            for sim_number, result_df in self.results.items():
-                # Perform a left join to add experiment parameters to results based on 'simulation'
-                merged_results = result_df.join(
-                    self.inputs.filter(pl.col("simulation") == sim_number),
-                    on="simulation",
-                    how="left",
-                )
-
-                # Update the current simulation's results with merged data
-                updated_results[sim_number] = merged_results
-
-            # Update all simulations at once after processing
-            self.results = updated_results
-
-        else:
+        # Ensure results is a Polars DataFrame
+        if not isinstance(self.results, pl.DataFrame):
             raise TypeError(
-                "self.results must be either a Polars DataFrame or a dictionary of Polars DataFrames."
+                "self.results must be a Polars DataFrame."
             )
+
+        # Perform a left join to add input parameters to results based on 'simulation' and 'randomSeed'
+        merged_results = self.results.join(
+            self.inputs, on=["simulation", "randomSeed"], how="left"
+        )
+
+        # Ensure the DataFrame is unique on 'simulation' and 'randomSeed'
+        merged_results = merged_results.unique(subset=["simulation", "randomSeed"])
+
+        # Update self.results with merged data
+        self.results = merged_results
 
     def calculate_summary_metrics(self, summary_function):
         """
@@ -200,21 +186,13 @@ class SimulationBundle:
 
         self.summary_metrics = {}
 
-        if isinstance(self.results, dict):
-            for sim_number, sim_result in self.results.items():
-                self.summary_metrics[sim_number] = summary_function(sim_result)
-        elif isinstance(self.results, pl.DataFrame):
-            grouped_results = self.results.group_by("simulation").apply(
-                summary_function
-            )
-            for sim_number in grouped_results["simulation"]:
-                self.summary_metrics[sim_number] = grouped_results.filter(
-                    pl.col("simulation") == sim_number
-                ).to_dict(False)
-        else:
-            raise TypeError(
-                "Expected results to be either a Polars DataFrame or a dictionary."
-            )
+        grouped_results = self.results.groupby("simulation").apply(
+            summary_function
+        )
+        for sim_number in grouped_results["simulation"]:
+            self.summary_metrics[sim_number] = grouped_results.filter(
+                pl.col("simulation") == sim_number
+            ).to_dict(False)
 
     def calculate_distances(
         self, target_data, distance_function, use_summary_metrics=True
@@ -235,16 +213,9 @@ class SimulationBundle:
         if use_summary_metrics and hasattr(self, "summary_metrics"):
             data_to_use = self.summary_metrics
         else:
-            if isinstance(self.results, dict):
-                data_to_use = self.results
-            elif isinstance(self.results, pl.DataFrame):
-                data_to_use = {
-                    row["simulation"]: row for row in self.results.to_dict()
-                }
-            else:
-                raise TypeError(
-                    "Expected results to be either a Polars DataFrame or a dictionary of DataFrames."
-                )
+            data_to_use = {
+                row["simulation"]: row for row in self.results.to_dict()
+            }
 
         # Calculate distances using the chosen data
         self.distances = {}
@@ -313,7 +284,7 @@ class SimulationBundle:
         self.collate_accept_results()
 
         # Group by parameters besides simulation and random seed
-        particle_prop_accepted = self.accept_results.group_by(
+        particle_prop_accepted = self.accept_results.groupby(
             self.inputs.drop(["simulation", "randomSeed"]).columns
         ).agg(
             pl.col("accept_bool").mean().alias("acceptance_weight"),
@@ -449,19 +420,8 @@ class SimulationBundle:
         # If no duplicates are found, proceed with updating self.inputs
         self.inputs = merged_inputs
 
-        # Merge results depending on their type
-        if isinstance(other_bundle.results, dict) and isinstance(
-            self.results, dict
-        ):
-            self.results.update(other_bundle.results)
-        elif isinstance(other_bundle.results, pl.DataFrame) and isinstance(
-            self.results, pl.DataFrame
-        ):
-            self.results.vstack(other_bundle.results)
-        else:
-            raise TypeError(
-                "Cannot merge results: types do not match or are not supported."
-            )
+        # Merge results as DataFrames
+        self.results = self.results.vstack(other_bundle.results).unique(subset=["simulation", "randomSeed"])
 
         # Merge distances dictionaries directly
         self.distances.update(other_bundle.distances)
