@@ -23,7 +23,7 @@ class SimulationBundle:
         merge_history (dict): History of merges with other SimulationBundle objects
         summary_metrics (pl.DataFrame): Summary metrics calculated for each simulation
         acceptance_weights (pl.DataFrame): Weights for accepted simulations
-        accept_results (pl.DataFrame): DataFrame of acceptance results
+        accept_results (pl.DataFrame): DataFrame of accepted results
     """
 
     def __init__(
@@ -47,12 +47,24 @@ class SimulationBundle:
         self.inputs = inputs
         self.status = status
         self.merge_history = {}
-        self.results = pl.DataFrame()  # Initialize results as an empty DataFrame
-        self.distances = pl.DataFrame()  # Initialize distances as an empty DataFrame
-        self.accepted = pl.DataFrame()  # Initialize accepted as an empty DataFrame
-        self.acceptance_weights = pl.DataFrame()  # Initialize acceptance_weights as an empty DataFrame
-        self.weights = pl.DataFrame()  # Initialize weights as an empty DataFrame
-        self.summary_metrics = pl.DataFrame()  # Initialize summary_metrics as an empty DataFrame
+        self.results = (
+            pl.DataFrame()
+        )  # Initialize results as an empty DataFrame
+        self.distances = (
+            pl.DataFrame()
+        )  # Initialize distances as an empty DataFrame
+        self.accepted = (
+            pl.DataFrame()
+        )  # Initialize accepted as an empty DataFrame
+        self.acceptance_weights = (
+            pl.DataFrame()
+        )  # Initialize acceptance_weights as an empty DataFrame
+        self.weights = (
+            pl.DataFrame()
+        )  # Initialize weights as an empty DataFrame
+        self.summary_metrics = (
+            pl.DataFrame()
+        )  # Initialize summary_metrics as an empty DataFrame
 
         # Private variables
         self._step_number = step_number
@@ -160,9 +172,7 @@ class SimulationBundle:
 
         # Ensure results is a Polars DataFrame
         if not isinstance(self.results, pl.DataFrame):
-            raise TypeError(
-                "self.results must be a Polars DataFrame."
-            )
+            raise TypeError("self.results must be a Polars DataFrame.")
 
         # Perform a left join to add input parameters to results based on 'simulation' and 'randomSeed'
         merged_results = self.results.join(
@@ -170,7 +180,9 @@ class SimulationBundle:
         )
 
         # Ensure the DataFrame is unique on 'simulation' and 'randomSeed'
-        merged_results = merged_results.unique(subset=["simulation", "randomSeed"])
+        merged_results = merged_results.unique(
+            subset=["simulation", "randomSeed"]
+        )
 
         # Update self.results with merged data
         self.results = merged_results
@@ -225,7 +237,9 @@ class SimulationBundle:
 
         for sim_number, sim_data in data_to_use.groupby("simulation"):
             distance = distance_function(sim_data, target_data)
-            distances_list.append({"simulation": sim_number, "distance": distance})
+            distances_list.append(
+                {"simulation": sim_number, "distance": distance}
+            )
 
         self.distances = pl.DataFrame(distances_list)
 
@@ -260,7 +274,12 @@ class SimulationBundle:
                     accepted_params = accepted_params.drop("randomSeed")
 
                 # Add filtered parameters to the list of accepted simulations
-                accepted_list.append({"simulation": row["simulation"], "params": accepted_params})
+                accepted_list.append(
+                    {
+                        "simulation": row["simulation"],
+                        "params": accepted_params,
+                    }
+                )
 
         # Update self.accepted with accepted data
         self.accepted = pl.DataFrame(accepted_list)
@@ -313,14 +332,17 @@ class SimulationBundle:
         # Create acceptance weights (to be included in the weights assignment) and params dict
         for row in particle_prop_accepted.rows(named=True):
             acceptance_weights_list.append(
-                {"simulation": row["simulation"], "acceptance_weight": row["acceptance_weight"]}
+                {
+                    "simulation": row["simulation"],
+                    "acceptance_weight": row["acceptance_weight"],
+                }
             )
             accepted_list.append(
                 {
                     "simulation": row["simulation"],
                     "params": self.inputs.filter(
                         pl.col("simulation") == row["simulation"]
-                    ).drop(["simulation", "randomSeed"])
+                    ).drop(["simulation", "randomSeed"]),
                 }
             )
 
@@ -369,8 +391,12 @@ class SimulationBundle:
                 accepted_params = accepted_params.drop("randomSeed")
 
             # Store parameters of accepted simulations in an attribute for later use or analysis
-            accepted_list.append({"simulation": row["simulation"], "params": accepted_params})
-            acceptance_weights_list.append({"simulation": row["simulation"], "acceptance_weight": 1.0})
+            accepted_list.append(
+                {"simulation": row["simulation"], "params": accepted_params}
+            )
+            acceptance_weights_list.append(
+                {"simulation": row["simulation"], "acceptance_weight": 1.0}
+            )
 
         self.accepted = pl.DataFrame(accepted_list)
         self.acceptance_weights = pl.DataFrame(acceptance_weights_list)
@@ -437,19 +463,29 @@ class SimulationBundle:
         self.inputs = merged_inputs
 
         # Merge results as DataFrames
-        self.results = self.results.vstack(other_bundle.results).unique(subset=["simulation", "randomSeed"])
+        self.results = self.results.vstack(other_bundle.results).unique(
+            subset=["simulation", "randomSeed"]
+        )
 
         # Merge distances DataFrames directly
-        self.distances = self.distances.vstack(other_bundle.distances).unique(subset=["simulation"])
+        self.distances = self.distances.vstack(other_bundle.distances).unique(
+            subset=["simulation"]
+        )
 
         # Merge accepted simulations DataFrames directly
-        self.accepted = self.accepted.vstack(other_bundle.accepted).unique(subset=["simulation"])
+        self.accepted = self.accepted.vstack(other_bundle.accepted).unique(
+            subset=["simulation"]
+        )
 
         # Merge acceptance weights DataFrames directly
-        self.acceptance_weights = self.acceptance_weights.vstack(other_bundle.acceptance_weights).unique(subset=["simulation"])
+        self.acceptance_weights = self.acceptance_weights.vstack(
+            other_bundle.acceptance_weights
+        ).unique(subset=["simulation"])
 
         # Merge summary metrics DataFrames directly
-        self.summary_metrics = self.summary_metrics.vstack(other_bundle.summary_metrics).unique(subset=["simulation"])
+        self.summary_metrics = self.summary_metrics.vstack(
+            other_bundle.summary_metrics
+        ).unique(subset=["simulation"])
 
         # Record the merge event in the history
         current_merge_index = len(self.merge_history) + 1
