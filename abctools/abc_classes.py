@@ -16,13 +16,13 @@ class SimulationBundle:
         baseline_params (dict): Unchanging parameters needed for the simulation
         experiment_params (list): Calculated from 'inputs'--list of experiment parameter names
         status (str): Current status in the ABC process
-        distances (dict): Calculated distances from target
-        accepted (dict): Accepted simulations with experiment parameters
+        distances (pl.DataFrame): Calculated distances from target
+        accepted (pl.DataFrame): Accepted simulations with experiment parameters
         n_accepted (int): Calculated from 'accepted'--number of accepted simulations
-        weights (dict): Simulation weights for resampling
+        weights (pl.DataFrame): Simulation weights for resampling
         merge_history (dict): History of merges with other SimulationBundle objects
-        summary_metrics (dict): Summary metrics calculated for each simulation
-        acceptance_weights (dict): Weights for accepted simulations
+        summary_metrics (pl.DataFrame): Summary metrics calculated for each simulation
+        acceptance_weights (pl.DataFrame): Weights for accepted simulations
         accept_results (pl.DataFrame): DataFrame of acceptance results
     """
 
@@ -47,8 +47,12 @@ class SimulationBundle:
         self.inputs = inputs
         self.status = status
         self.merge_history = {}
-        self.weights = None
         self.results = pl.DataFrame()  # Initialize results as an empty DataFrame
+        self.distances = pl.DataFrame()  # Initialize distances as an empty DataFrame
+        self.accepted = pl.DataFrame()  # Initialize accepted as an empty DataFrame
+        self.acceptance_weights = pl.DataFrame()  # Initialize acceptance_weights as an empty DataFrame
+        self.weights = pl.DataFrame()  # Initialize weights as an empty DataFrame
+        self.summary_metrics = pl.DataFrame()  # Initialize summary_metrics as an empty DataFrame
 
         # Private variables
         self._step_number = step_number
@@ -82,7 +86,7 @@ class SimulationBundle:
     @property
     def n_accepted(self) -> int:
         """Getter for number of accepted simulations"""
-        return len(self.accepted)
+        return self.accepted.shape[0]
 
     @property
     def writer_input_dict(self) -> dict:
@@ -184,15 +188,16 @@ class SimulationBundle:
         if self.results is None:
             raise ValueError("No results available to summarize.")
 
-        self.summary_metrics = {}
+        self.summary_metrics = pl.DataFrame()
 
         grouped_results = self.results.groupby("simulation").apply(
             summary_function
         )
         for sim_number in grouped_results["simulation"]:
-            self.summary_metrics[sim_number] = grouped_results.filter(
+            metrics_df = grouped_results.filter(
                 pl.col("simulation") == sim_number
-            ).to_dict(False)
+            )
+            self.summary_metrics = self.summary_metrics.vstack(metrics_df)
 
     def calculate_distances(
         self, target_data, distance_function, use_summary_metrics=True
@@ -210,19 +215,19 @@ class SimulationBundle:
         """
 
         # Check if summary metrics should be used
-        if use_summary_metrics and hasattr(self, "summary_metrics"):
+        if use_summary_metrics and not self.summary_metrics.is_empty():
             data_to_use = self.summary_metrics
         else:
-            data_to_use = {
-                row["simulation"]: row for row in self.results.to_dict()
-            }
+            data_to_use = self.results
 
         # Calculate distances using the chosen data
-        self.distances = {}
+        distances_list = []
 
-        for sim_number, sim_data in data_to_use.items():
+        for sim_number, sim_data in data_to_use.groupby("simulation"):
             distance = distance_function(sim_data, target_data)
-            self.distances[sim_number] = distance
+            distances_list.append({"simulation": sim_number, "distance": distance})
+
+        self.distances = pl.DataFrame(distances_list)
 
     def accept_reject(self, tolerance):
         """
@@ -236,28 +241,34 @@ class SimulationBundle:
         """
 
         # Ensure distances have been calculated
-        if not hasattr(self, "distances"):
+        if self.distances.is_empty():
             raise ValueError("Distances have not been calculated.")
 
-        # Initialize accepted simulations dictionary
-        self.accepted = {}
-        self.acceptance_weights = {}
+        # Initialize accepted simulations DataFrame
+        accepted_list = []
 
         # Iterate over simulations and accept those within tolerance
-        for sim_number, distance in self.distances.items():
-            if distance <= tolerance:
+        for row in self.distances.rows(named=True):
+            if row["distance"] <= tolerance:
                 # Filter inputs for current simulation and remove 'simulation' and 'randomSeed' columns if present
                 accepted_params = self.inputs.filter(
-                    pl.col("simulation") == sim_number
+                    pl.col("simulation") == row["simulation"]
                 )
                 if "simulation" in accepted_params.columns:
                     accepted_params = accepted_params.drop("simulation")
                 if "randomSeed" in accepted_params.columns:
                     accepted_params = accepted_params.drop("randomSeed")
 
-                # Add filtered parameters to the dictionary of accepted simulations
-                self.accepted[sim_number] = accepted_params
-                self.acceptance_weights[sim_number] = 1.0
+                # Add filtered parameters to the list of accepted simulations
+                accepted_list.append({"simulation": row["simulation"], "params": accepted_params})
+
+        # Update self.accepted with accepted data
+        self.accepted = pl.DataFrame(accepted_list)
+
+        # Create acceptance weights DataFrame
+        self.acceptance_weights = self.accepted.with_columns(
+            pl.lit(1.0).alias("acceptance_weight")
+        )
 
     def accept_stochastic(
         self,
@@ -277,7 +288,7 @@ class SimulationBundle:
             ValueError: If distances have not been previously calculated.
         """
 
-        if not hasattr(self, "distances"):
+        if self.distances.is_empty():
             raise ValueError("Distances have not been calculated.")
 
         self.accept_reject(tolerance)
@@ -296,20 +307,25 @@ class SimulationBundle:
             pl.col("acceptance_weight") > 0
         )
 
-        self.acceptance_weights = {}
-        self.accepted = {}
+        accepted_list = []
+        acceptance_weights_list = []
+
         # Create acceptance weights (to be included in the weights assignment) and params dict
         for row in particle_prop_accepted.rows(named=True):
-            self.acceptance_weights.update(
-                {row["simulation"]: row["acceptance_weight"]}
+            acceptance_weights_list.append(
+                {"simulation": row["simulation"], "acceptance_weight": row["acceptance_weight"]}
             )
-            self.accepted.update(
+            accepted_list.append(
                 {
-                    row["simulation"]: self.inputs.filter(
+                    "simulation": row["simulation"],
+                    "params": self.inputs.filter(
                         pl.col("simulation") == row["simulation"]
                     ).drop(["simulation", "randomSeed"])
                 }
             )
+
+        self.acceptance_weights = pl.DataFrame(acceptance_weights_list)
+        self.accepted = pl.DataFrame(accepted_list)
 
     def accept_proportion(self, proportion):
         """
@@ -329,26 +345,23 @@ class SimulationBundle:
         """
 
         # Ensure distances have been calculated
-        if not hasattr(self, "distances"):
+        if self.distances.is_empty():
             raise ValueError("Distances have not been calculated.")
 
         # Calculate the number of simulations to accept based on the given proportion (minimum of 1)
-        num_to_accept = max(1, int(len(self.distances) * proportion))
+        num_to_accept = max(1, int(self.distances.shape[0] * proportion))
 
         # Sort simulations by distance in ascending order and select the best ones
-        sorted_simulations = sorted(
-            self.distances.items(), key=lambda item: item[1]
-        )
+        sorted_distances = self.distances.sort("distance").head(num_to_accept)
 
-        # Initialize/clear accepted simulations dictionary
-        self.accepted = {}
-        self.acceptance_weights = {}
+        accepted_list = []
+        acceptance_weights_list = []
 
         # Accept only the top-performing simulations as determined by the specified proportion
-        for sim_number, distance in sorted_simulations[:num_to_accept]:
+        for row in sorted_distances.rows(named=True):
             # Retrieve and clean input parameters for each accepted simulation
             accepted_params = self.inputs.filter(
-                pl.col("simulation") == sim_number
+                pl.col("simulation") == row["simulation"]
             )
             if "simulation" in accepted_params.columns:
                 accepted_params = accepted_params.drop("simulation")
@@ -356,8 +369,11 @@ class SimulationBundle:
                 accepted_params = accepted_params.drop("randomSeed")
 
             # Store parameters of accepted simulations in an attribute for later use or analysis
-            self.accepted[sim_number] = accepted_params
-            self.acceptance_weights[sim_number] = 1.0
+            accepted_list.append({"simulation": row["simulation"], "params": accepted_params})
+            acceptance_weights_list.append({"simulation": row["simulation"], "acceptance_weight": 1.0})
+
+        self.accepted = pl.DataFrame(accepted_list)
+        self.acceptance_weights = pl.DataFrame(acceptance_weights_list)
 
     def collate_accept_results(self):
         """
@@ -371,14 +387,14 @@ class SimulationBundle:
         """
 
         # Ensure accept is already calculated
-        if not hasattr(self, "accepted"):
+        if self.accepted.is_empty():
             raise ValueError("Accept has not been calculated.")
 
         # Dummy mapper to join distances and accept with inputs
         mapper = pl.DataFrame(
             {
-                "simulation": self.distances.keys(),
-                "distance": self.distances.values(),
+                "simulation": self.distances["simulation"],
+                "distance": self.distances["distance"],
             }
         )
 
@@ -388,7 +404,7 @@ class SimulationBundle:
         )
 
         # Adding logical column whether an input was accepted and storing as self attribute
-        accepted_sims = list(int(k) for k in self.accepted.keys())
+        accepted_sims = self.accepted["simulation"].to_list()
         self.accept_results = distance_results.with_columns(
             pl.col("simulation").is_in(accepted_sims).alias("accept_bool")
         )
@@ -423,14 +439,17 @@ class SimulationBundle:
         # Merge results as DataFrames
         self.results = self.results.vstack(other_bundle.results).unique(subset=["simulation", "randomSeed"])
 
-        # Merge distances dictionaries directly
-        self.distances.update(other_bundle.distances)
+        # Merge distances DataFrames directly
+        self.distances = self.distances.vstack(other_bundle.distances).unique(subset=["simulation"])
 
-        # Merge accepted simulations dictionaries directly
-        self.accepted.update(other_bundle.accepted)
+        # Merge accepted simulations DataFrames directly
+        self.accepted = self.accepted.vstack(other_bundle.accepted).unique(subset=["simulation"])
 
-        # Merge acceptance weights dictionaries directly
-        self.acceptance_weights.update(other_bundle.acceptance_weights)
+        # Merge acceptance weights DataFrames directly
+        self.acceptance_weights = self.acceptance_weights.vstack(other_bundle.acceptance_weights).unique(subset=["simulation"])
+
+        # Merge summary metrics DataFrames directly
+        self.summary_metrics = self.summary_metrics.vstack(other_bundle.summary_metrics).unique(subset=["simulation"])
 
         # Record the merge event in the history
         current_merge_index = len(self.merge_history) + 1
