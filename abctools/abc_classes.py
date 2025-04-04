@@ -1,7 +1,11 @@
+import logging
 import os
 import pickle
 
 import polars as pl
+
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 class SimulationBundle:
@@ -210,9 +214,10 @@ class SimulationBundle:
 
         self.summary_metrics = pl.DataFrame()
 
-        grouped_results = self.results.group_by("simulation").apply(
+        grouped_results = self.results.group_by("simulation").map_groups(
             summary_function
         )
+
         for sim_number in grouped_results["simulation"]:
             metrics_df = grouped_results.filter(
                 pl.col("simulation") == sim_number
@@ -244,6 +249,9 @@ class SimulationBundle:
         distances_list = []
 
         for sim_number, sim_data in data_to_use.group_by("simulation"):
+            sim_number = sim_number[0]  # Extract the simulation number
+            if "simulation" in sim_data.columns:
+                sim_data = sim_data.drop("simulation")
             distance = distance_function(sim_data, target_data)
             distances_list.append(
                 {"simulation": sim_number, "distance": distance}
@@ -266,31 +274,19 @@ class SimulationBundle:
         if self.distances.is_empty():
             raise ValueError("Distances have not been calculated.")
 
-        # Initialize accepted simulations DataFrame
-        accepted_list = []
+        # Filter distances based on tolerance
+        accepted_simulations = self.distances.clone().filter(
+            pl.col("distance") <= tolerance
+        )
 
-        # Iterate over simulations and accept those within tolerance
-        for row in self.distances.rows(named=True):
-            if row["distance"] <= tolerance:
-                # Filter inputs for current simulation and remove 'simulation' and 'randomSeed' columns if present
-                accepted_params = self.inputs.filter(
-                    pl.col("simulation") == row["simulation"]
-                )
-                if "simulation" in accepted_params.columns:
-                    accepted_params = accepted_params.drop("simulation")
-                if "randomSeed" in accepted_params.columns:
-                    accepted_params = accepted_params.drop("randomSeed")
+        # Join with inputs to get accepted parameters
+        self.accepted = accepted_simulations.join(
+            self.inputs, on="simulation"
+        ).drop("distance")
 
-                # Add filtered parameters to the list of accepted simulations
-                accepted_list.append(
-                    {
-                        "simulation": row["simulation"],
-                        "params": accepted_params,
-                    }
-                )
-
-        # Update self.accepted with accepted data
-        self.accepted = pl.DataFrame(accepted_list)
+        # Drop 'randomSeed' columns if present
+        if "randomSeed" in self.accepted.columns:
+            self.accepted = self.accepted.drop("randomSeed")
 
         # Create acceptance weights DataFrame
         self.acceptance_weights = self.accepted.with_columns(
@@ -345,14 +341,18 @@ class SimulationBundle:
                     "acceptance_weight": row["acceptance_weight"],
                 }
             )
-            accepted_list.append(
-                {
-                    "simulation": row["simulation"],
-                    "params": self.inputs.filter(
-                        pl.col("simulation") == row["simulation"]
-                    ).drop(["simulation", "randomSeed"]),
-                }
+
+            # Extract parameters and convert to dictionary
+            params_dict = (
+                self.inputs.filter(pl.col("simulation") == row["simulation"])
+                .drop(["simulation", "randomSeed"])
+                .to_dicts()[0]
             )
+
+            # Add simulation ID to the parameters dictionary
+            params_dict["simulation"] = row["simulation"]
+
+            accepted_list.append(params_dict)
 
         self.acceptance_weights = pl.DataFrame(acceptance_weights_list)
         self.accepted = pl.DataFrame(accepted_list)
@@ -471,9 +471,7 @@ class SimulationBundle:
         self.inputs = merged_inputs
 
         # Merge results as DataFrames
-        self.results = self.results.vstack(other_bundle.results).unique(
-            subset=["simulation"]
-        )
+        self.results = self.results.vstack(other_bundle.results)
 
         # Merge distances DataFrames directly
         self.distances = self.distances.vstack(other_bundle.distances).unique(
