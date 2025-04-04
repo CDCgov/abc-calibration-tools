@@ -64,21 +64,34 @@ def run_experiment_sequence(
 
         if summary_function:
             summarized_results = summary_function(results)
-            results_list.append({
-                "simulation": simulation_params["simulation"],
-                "summary_metrics": summarized_results
-            })
+            results_list.append(
+                {
+                    "simulation": simulation_params["simulation"],
+                    "summary_metrics": summarized_results,
+                }
+            )
         else:
-            results_list.append({
-                "simulation": simulation_params["simulation"],
-                "results": results
-            })
+            results = results.with_columns(
+                pl.lit(simulation_params["simulation"])
+                .alias("simulation")
+                .cast(pl.Int64)
+            )
+            results_list.append(results)
 
-    return pl.DataFrame(results_list)
+    if summary_function:
+        return pl.DataFrame(results_list)
+    else:
+        return pl.concat(results_list)
 
 
 def calculate_infection_metrics(df):
     """User-defined function to calculate infection metrics, in this case time to peak infection and total infected"""
+    # Check if the "simulation" column exists
+    if "simulation" in df.columns:
+        simulation = df["simulation"].unique().item()
+    else:
+        simulation = None
+
     # Find the time of peak infection (first instance, if multiple)
     time_to_peak_infection = (
         df.sort("infected", descending=True).select(pl.first("time"))
@@ -87,16 +100,34 @@ def calculate_infection_metrics(df):
     # Calculate total infected by taking the maximum value from the 'recovered' column
     total_infected = df.get_column("recovered").max()
 
-    metrics = (time_to_peak_infection, total_infected)
-    return metrics
+    # Create a DataFrame with the metrics
+    metrics_data = {
+        "time_to_peak_infection": [time_to_peak_infection],
+        "total_infected": [total_infected],
+    }
+
+    if simulation is not None:
+        metrics_data["simulation"] = [simulation]
+
+    metrics_df = pl.DataFrame(metrics_data)
+
+    return metrics_df
 
 
-def calculate_distance(results_data: tuple, target_data: tuple) -> float:
+def calculate_distance(
+    results_data: pl.DataFrame, target_data: pl.DataFrame
+) -> float:
     """User-defined function to measure Euclidean distance from target"""
 
-    # Unpack data from tuples
-    time_to_peak_infection_results, total_infected_results = results_data
-    time_to_peak_infection_target, total_infected_target = target_data
+    # Extract values from DataFrames
+    time_to_peak_infection_results = results_data[
+        "time_to_peak_infection"
+    ].item()
+    total_infected_results = results_data["total_infected"].item()
+    time_to_peak_infection_target = target_data[
+        "time_to_peak_infection"
+    ].item()
+    total_infected_target = target_data["total_infected"].item()
 
     # Calculate differences
     time_diff = time_to_peak_infection_results - time_to_peak_infection_target
@@ -221,11 +252,12 @@ class TestABCPipeline(unittest.TestCase):
             )
 
             with self.subTest(f"Run Model, step #{step_number}"):
-                results = run_experiment_sequence(
-                    sim_bundle.full_params_df
+                results = run_experiment_sequence(sim_bundle.full_params_df)
+                sim_bundle.add_results(results, recover_params=False)
+                self.assertEqual(
+                    sim_bundle.results.n_unique(subset=["simulation"]),
+                    self.n_init,
                 )
-                sim_bundle.add_results(results)
-                self.assertEqual(len(sim_bundle.results), self.n_init)
                 self.assertIn("time", sim_bundle.results[0].columns)
                 self.assertIn("infected", sim_bundle.results[0].columns)
                 self.assertIn("recovered", sim_bundle.results[0].columns)
@@ -236,16 +268,16 @@ class TestABCPipeline(unittest.TestCase):
                 sim_bundle.calculate_summary_metrics(
                     calculate_infection_metrics
                 )
-                for _, value in sim_bundle.summary_metrics.items():
-                    self.assertIsInstance(value, tuple)
-                    # todo: could ensure time to peak infection is in reasonable range
+                self.assertIsInstance(sim_bundle.summary_metrics, pl.DataFrame)
+                self.assertEqual(len(sim_bundle.summary_metrics), self.n_init)
+                # todo: could ensure time to peak infection is in reasonable range
 
             with self.subTest(f"Calculate Distances, step #{step_number}"):
                 sim_bundle.calculate_distances(
                     self.target_metrics, calculate_distance
                 )
                 # Ensure all distances are >=0
-                for distance in sim_bundle.distances.values():
+                for distance in sim_bundle.distances["distance"]:
                     self.assertGreaterEqual(distance, 0)
 
             with self.subTest(
@@ -305,7 +337,9 @@ class TestABCPipeline(unittest.TestCase):
                     additional_results = run_experiment_sequence(
                         additional_sim_bundle.full_params_df
                     )
-                    additional_sim_bundle.add_results(additional_results)
+                    additional_sim_bundle.add_results(
+                        additional_results, recover_params=False
+                    )
 
                     # Calculate summary metrics for the additional simulations
                     additional_sim_bundle.calculate_summary_metrics(
@@ -354,17 +388,16 @@ class TestABCPipeline(unittest.TestCase):
                 accept_above_max = sim_bundle.accept_results.filter(
                     pl.col("accept_bool")
                 ).filter(pl.col("distance") > self.tolerance[step_number])
-
                 self.assertTrue(accept_above_max.is_empty())
 
             with self.subTest(f"Calculate weights, step #{step_number}"):
                 if step_number == 0:
-                    # uniform weights on the initial step
-                    weights = {}
-                    for key in sim_bundle.accepted:
-                        weights[key] = sim_bundle.acceptance_weights[
-                            key
-                        ] / len(sim_bundle.accepted)
+                    # Uniform weights on the initial step
+                    total_accepted = len(sim_bundle.accepted)
+                    weights = sim_bundle.accepted.select(
+                        pl.col("simulation"),
+                        (pl.lit(1.0) / total_accepted).alias("weight"),
+                    )
                 else:
                     prev_step_accepted = sim_bundles[step_number - 1].accepted
                     prev_step_weights = sim_bundles[step_number - 1].weights
@@ -381,7 +414,7 @@ class TestABCPipeline(unittest.TestCase):
                     )
 
                 sim_bundle.weights = weights
-                total_weight = sum(weights.values())
+                total_weight = weights["weight"].sum()
                 self.assertAlmostEqual(total_weight, 1.0, places=5)
 
             # Add current sim_bundle to sim_bundles dictionary
@@ -395,7 +428,18 @@ class TestABCPipeline(unittest.TestCase):
                 os.makedirs(output_folder)
 
             for step_number, sim_bundle in sim_bundles.items():
-                data_list = list(sim_bundle.results.values())
+                unique_simulations = (
+                    sim_bundle.results.select("simulation")
+                    .unique()
+                    .to_series()
+                    .to_list()
+                )
+
+                data_list = [
+                    sim_bundle.results.filter(pl.col("simulation") == sim)
+                    for sim in unique_simulations
+                ]
+
                 x_col = "time"
                 y_col = "infected"
                 plot_args_list = [{"color": "blue", "alpha": 0.5}] * len(
@@ -423,34 +467,29 @@ class TestABCPipeline(unittest.TestCase):
         with self.subTest("Make results plots"):
             for step_number, sim_bundle in sim_bundles.items():
                 data_list = []
-                for summary_metrics in sim_bundle.summary_metrics.values():
+                for summary_metrics in sim_bundle.summary_metrics.iter_rows(
+                    named=True
+                ):
                     data_list.append(
                         pl.DataFrame(
                             {
-                                "time_to_peak_infections": [
-                                    summary_metrics[0]
+                                "time_to_peak_infection": [
+                                    summary_metrics["time_to_peak_infection"]
                                 ],
-                                "total_infected": [summary_metrics[1]],
+                                "total_infected": [
+                                    summary_metrics["total_infected"]
+                                ],
                             }
                         )
                     )
-                x_col = "time_to_peak_infections"
+                x_col = "time_to_peak_infection"
                 y_col = "total_infected"
                 plot_args_list = [
                     {"color": "blue", "alpha": 0.10, "marker": "o"}
                 ] * len(data_list)
 
                 # Add target data
-                data_list.append(
-                    pl.DataFrame(
-                        {
-                            "time_to_peak_infections": [
-                                self.target_metrics[0]
-                            ],
-                            "total_infected": [self.target_metrics[1]],
-                        }
-                    )
-                )
+                data_list.append(self.target_metrics)
                 plot_args_list.append(
                     {"color": "red", "alpha": 0.9, "marker": "o"}
                 )
