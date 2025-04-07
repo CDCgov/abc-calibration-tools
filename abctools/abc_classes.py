@@ -28,6 +28,7 @@ class SimulationBundle:
         summary_metrics (pl.DataFrame): Summary metrics calculated for each simulation
         acceptance_weights (pl.DataFrame): Weights for accepted simulations
         accept_results (pl.DataFrame): DataFrame of accepted results
+        history (dict): History of attributes from previous steps
     """
 
     def __init__(
@@ -57,6 +58,7 @@ class SimulationBundle:
         self.acceptance_weights = pl.DataFrame()
         self.weights = pl.DataFrame()
         self.summary_metrics = pl.DataFrame()
+        self.accept_results = pl.DataFrame()
 
         # Private variables
         self._step_number = step_number
@@ -66,6 +68,9 @@ class SimulationBundle:
             for col in inputs.columns
             if col not in ["simulation", "randomSeed"]
         ]
+
+        # History dictionary to store previous steps
+        self.history = {}
 
     @property
     def step_number(self) -> int:
@@ -498,3 +503,52 @@ class SimulationBundle:
         number_merged = len(other_bundle.inputs)
 
         self.merge_history[current_merge_index] = number_merged
+
+    def update_step(self, new_step_number: int):
+        """
+        Update to the next step and store the current state in history.
+        """
+        self.history[self._step_number] = {
+            "inputs": self.inputs.clone(),
+            "results": self.results.clone(),
+            "distances": self.distances.clone(),
+            "accepted": self.accepted.clone(),
+            "acceptance_weights": self.acceptance_weights.clone(),
+            "summary_metrics": self.summary_metrics.clone(),
+            "n_accepted": self.n_accepted,
+            "weights": self.weights.clone(),
+            "accept_results": self.accept_results.clone(),
+        }
+        self._step_number = new_step_number
+        self.results = pl.DataFrame()
+        self.distances = pl.DataFrame()
+        self.accepted = pl.DataFrame()
+        self.acceptance_weights = pl.DataFrame()
+        self.summary_metrics = pl.DataFrame()
+        self.weights = pl.DataFrame()
+        self.accept_results = pl.DataFrame()
+
+    def restore(self, step_number: int):
+        """
+        Restores the state of the SimulationBundle to a previous step.
+    
+        Args:
+            step_number (int): The step number to restore to.
+    
+        Raises:
+            ValueError: If the specified step number is not in the history.
+        """
+        if step_number not in self.history:
+            raise ValueError(f"Step number {step_number} not found in history.")
+    
+        previous_state = self.history[step_number]
+    
+        self.inputs = previous_state["inputs"].clone()
+        self.results = previous_state["results"].clone()
+        self.distances = previous_state["distances"].clone()
+        self.accepted = previous_state["accepted"].clone()
+        self.acceptance_weights = previous_state["acceptance_weights"].clone()
+        self.summary_metrics = previous_state["summary_metrics"].clone()
+        self.weights = previous_state["weights"].clone()
+        self.accept_results = previous_state["accept_results"].clone()
+        self._step_number = step_number
