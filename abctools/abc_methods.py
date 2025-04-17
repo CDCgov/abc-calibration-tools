@@ -151,7 +151,7 @@ def resample(
     new_samples = []
 
     # Normalize weights if provided (just to be safe)
-    if weights is not None:
+    if not weights.is_empty():
         total_weight = weights["weight"].sum()
         weights = weights.with_columns(
             (pl.col("weight") / total_weight).alias("weight")

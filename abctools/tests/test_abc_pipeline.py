@@ -86,11 +86,6 @@ def run_experiment_sequence(
 
 def calculate_infection_metrics(df):
     """User-defined function to calculate infection metrics, in this case time to peak infection and total infected"""
-    # Check if the "simulation" column exists
-    if "simulation" in df.columns:
-        simulation = df["simulation"].unique().item()
-    else:
-        simulation = None
 
     # Find the time of peak infection (first instance, if multiple)
     time_to_peak_infection = (
@@ -105,9 +100,6 @@ def calculate_infection_metrics(df):
         "time_to_peak_infection": [time_to_peak_infection],
         "total_infected": [total_infected],
     }
-
-    if simulation is not None:
-        metrics_data["simulation"] = [simulation]
 
     metrics_df = pl.DataFrame(metrics_data)
 
@@ -253,7 +245,7 @@ class TestABCPipeline(unittest.TestCase):
 
             with self.subTest(f"Run Model, step #{step_number}"):
                 results = run_experiment_sequence(sim_bundle.full_params_df)
-                sim_bundle.add_results(results, recover_params=False)
+                sim_bundle.add_results(results, merge_params=False)
                 self.assertEqual(
                     sim_bundle.results.n_unique(subset=["simulation"]),
                     self.n_init,
@@ -268,14 +260,18 @@ class TestABCPipeline(unittest.TestCase):
                 sim_bundle.calculate_summary_metrics(
                     calculate_infection_metrics
                 )
+
                 self.assertIsInstance(sim_bundle.summary_metrics, pl.DataFrame)
                 self.assertEqual(len(sim_bundle.summary_metrics), self.n_init)
                 # todo: could ensure time to peak infection is in reasonable range
 
             with self.subTest(f"Calculate Distances, step #{step_number}"):
                 sim_bundle.calculate_distances(
-                    self.target_metrics, calculate_distance
+                    self.target_metrics,
+                    calculate_distance,
+                    use_summary_metrics=True,
                 )
+
                 # Ensure all distances are >=0
                 for distance in sim_bundle.distances["distance"]:
                     self.assertGreaterEqual(distance, 0)
@@ -338,7 +334,7 @@ class TestABCPipeline(unittest.TestCase):
                         additional_sim_bundle.full_params_df
                     )
                     additional_sim_bundle.add_results(
-                        additional_results, recover_params=False
+                        additional_results, merge_params=False
                     )
 
                     # Calculate summary metrics for the additional simulations
