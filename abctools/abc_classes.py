@@ -1,6 +1,7 @@
 import logging
 import os
 import pickle
+from typing import Callable
 
 import polars as pl
 
@@ -36,6 +37,7 @@ class SimulationBundle:
         step_number: int,
         baseline_params: dict,
         status: str = "initialized",
+        seed_variable_name: str = "randomSeed",
     ):
         """
         Initialize a new instance of SimulationsBundle.
@@ -45,6 +47,7 @@ class SimulationBundle:
             step_number (int): Step/iteration/generation number.
             baseline_params (dict): The baseline parameters for the simulations.
             status (str): Current status of the object. Defaults to "initialized".
+            seed_variable_name (str): Name of the column containing random seeds. Defaults to "randomSeed".
         """
 
         # Public variables
@@ -56,7 +59,8 @@ class SimulationBundle:
         self.accepted = pl.DataFrame()
         self.acceptance_weights = pl.DataFrame()
         self.weights = pl.DataFrame()
-        self.summary_metrics = pl.DataFrame()
+        self.summary_metrics = None
+        self.seed_variable_name = seed_variable_name
 
         # Private variables
         self._step_number = step_number
@@ -64,7 +68,7 @@ class SimulationBundle:
         self._experiment_params = [
             col
             for col in inputs.columns
-            if col not in ["simulation", "randomSeed"]
+            if col not in ["simulation", self.seed_variable_name]
         ]
 
     @property
@@ -90,7 +94,7 @@ class SimulationBundle:
     @property
     def n_accepted(self) -> int:
         """Getter for number of accepted simulations"""
-        return self.accepted.shape[0]
+        return len(self.accepted)
 
     @property
     def writer_input_dict(self) -> dict:
@@ -150,7 +154,7 @@ class SimulationBundle:
             # Pickle only selected parts of the object and write it to file
             pickle.dump(self.__getstate__(), file)
 
-    def add_results(self, results_df, recover_params=True):
+    def add_results(self, results_df, merge_params=True):
         """
         Adds results to the SimulationBundle object.
 
@@ -166,17 +170,22 @@ class SimulationBundle:
             raise TypeError("results_df must be a Polars DataFrame.")
 
         if not results_df["simulation"].is_in(self.inputs["simulation"]).all():
-            raise ValueError(
-                "results_df must contain all simulation numbers from inputs."
-            )
+            if merge_params:
+                raise ValueError(
+                    "results_df must contain all simulation numbers from inputs if merging inputs."
+                )
+            else:
+                raise Warning(
+                    "Warning: results_df does not contain all the simulation numbers from inputs."
+                )
 
         # Recover params if applicable
-        if recover_params:
-            self.recover_params()
+        if merge_params:
+            self.merge_params()
 
         self.results = results_df
 
-    def recover_params(self):
+    def merge_params(self):
         """
         Updates self.results by merging in columns from self.inputs onto self.results based on the 'simulation' column.
 
@@ -185,7 +194,7 @@ class SimulationBundle:
         """
         if self.results is None:
             raise ValueError(
-                "self.results is not set. Cannot recover parameters without results."
+                "self.results is not set. Cannot merge parameters without results."
             )
 
         # Perform a left join to add input parameters to results based on 'simulation'
@@ -214,18 +223,16 @@ class SimulationBundle:
 
         self.summary_metrics = pl.DataFrame()
 
-        grouped_results = self.results.group_by("simulation").map_groups(
-            summary_function
+        grouped_results = apply_per_group_preserve_key(
+            self.results,
+            key="simulation",
+            user_udf=summary_function,
         )
 
-        for sim_number in grouped_results["simulation"]:
-            metrics_df = grouped_results.filter(
-                pl.col("simulation") == sim_number
-            )
-            self.summary_metrics = self.summary_metrics.vstack(metrics_df)
+        self.summary_metrics = grouped_results
 
     def calculate_distances(
-        self, target_data, distance_function, use_summary_metrics=True
+        self, target_data, distance_function, use_summary_metrics=False
     ):
         """
         Calculates distances between simulation results and target data using a user-defined distance function.
@@ -233,31 +240,25 @@ class SimulationBundle:
         Args:
             target_data (tuple): Target data to compare against.
             distance_function (callable): A user-defined function that takes results_data and target_data and returns a distance.
-            use_summary_metrics (bool): Whether to use summary metrics or raw results. Defaults to True if summary metrics have been calculated.
+            use_summary_metrics (bool): Whether to use summary metrics or raw results. Defaults to False.
 
         Returns:
             None
         """
 
         # Check if summary metrics should be used
-        if use_summary_metrics and not self.summary_metrics.is_empty():
+        if use_summary_metrics:
             data_to_use = self.summary_metrics
         else:
             data_to_use = self.results
 
-        # Calculate distances using the chosen data
-        distances_list = []
-
-        for sim_number, sim_data in data_to_use.group_by("simulation"):
-            sim_number = sim_number[0]  # Extract the simulation number
-            if "simulation" in sim_data.columns:
-                sim_data = sim_data.drop("simulation")
-            distance = distance_function(sim_data, target_data)
-            distances_list.append(
-                {"simulation": sim_number, "distance": distance}
-            )
-
-        self.distances = pl.DataFrame(distances_list)
+        self.distances = apply_per_group_preserve_key(
+            data_to_use,
+            key="simulation",
+            user_udf=distance_function,
+            result_column="distance",
+            target_data=target_data,
+        )
 
     def accept_reject(self, tolerance):
         """
@@ -274,19 +275,16 @@ class SimulationBundle:
         if self.distances.is_empty():
             raise ValueError("Distances have not been calculated.")
 
-        # Filter distances based on tolerance
-        accepted_simulations = self.distances.clone().filter(
-            pl.col("distance") <= tolerance
+        # Filter and join to get accepted parameters
+        self.accepted = (
+            self.distances.filter(pl.col("distance") <= tolerance)
+            .join(self.inputs, on="simulation")
+            .drop("distance")
         )
 
-        # Join with inputs to get accepted parameters
-        self.accepted = accepted_simulations.join(
-            self.inputs, on="simulation"
-        ).drop("distance")
-
         # Drop 'randomSeed' columns if present
-        if "randomSeed" in self.accepted.columns:
-            self.accepted = self.accepted.drop("randomSeed")
+        if self.seed_variable_name in self.accepted.columns:
+            self.accepted = self.accepted.drop(self.seed_variable_name)
 
         # Create acceptance weights DataFrame
         self.acceptance_weights = self.accepted.with_columns(
@@ -319,7 +317,7 @@ class SimulationBundle:
 
         # Group by parameters besides simulation and random seed
         particle_prop_accepted = self.accept_results.group_by(
-            self.inputs.drop(["simulation", "randomSeed"]).columns
+            self.inputs.drop(["simulation", self.seed_variable_name]).columns
         ).agg(
             pl.col("accept_bool").mean().alias("acceptance_weight"),
             pl.col("simulation").min().alias("simulation"),
@@ -345,7 +343,7 @@ class SimulationBundle:
             # Extract parameters and convert to dictionary
             params_dict = (
                 self.inputs.filter(pl.col("simulation") == row["simulation"])
-                .drop(["simulation", "randomSeed"])
+                .drop(["simulation", self.seed_variable_name])
                 .to_dicts()[0]
             )
 
@@ -379,7 +377,7 @@ class SimulationBundle:
             raise ValueError("Distances have not been calculated.")
 
         # Calculate the number of simulations to accept based on the given proportion (minimum of 1)
-        num_to_accept = max(1, int(self.distances.shape[0] * proportion))
+        num_to_accept = max(1, int(len(self.distances) * proportion))
 
         # Sort simulations by distance in ascending order and select the best ones
         sorted_distances = self.distances.sort("distance").head(num_to_accept)
@@ -395,8 +393,8 @@ class SimulationBundle:
             )
             if "simulation" in accepted_params.columns:
                 accepted_params = accepted_params.drop("simulation")
-            if "randomSeed" in accepted_params.columns:
-                accepted_params = accepted_params.drop("randomSeed")
+            if self.seed_variable_name in accepted_params.columns:
+                accepted_params = accepted_params.drop(self.seed_variable_name)
 
             # Store parameters of accepted simulations in an attribute for later use or analysis
             accepted_list.append(
@@ -424,17 +422,11 @@ class SimulationBundle:
         if self.accepted.is_empty():
             raise ValueError("Accept has not been calculated.")
 
-        # Dummy mapper to join distances and accept with inputs
-        mapper = pl.DataFrame(
-            {
-                "simulation": self.distances["simulation"],
-                "distance": self.distances["distance"],
-            }
-        )
-
         # Joining results with inputs
         distance_results = self.inputs.join(
-            mapper, on="simulation", how="left"
+            self.distances.select(["simulation", "distance"]),
+            on="simulation",
+            how="left",
         )
 
         # Adding logical column whether an input was accepted and storing as self attribute
@@ -456,7 +448,7 @@ class SimulationBundle:
         """
 
         # Merge inputs DataFrames directly
-        merged_inputs = self.inputs.vstack(other_bundle.inputs)
+        merged_inputs = pl.concat([self.inputs, other_bundle.inputs])
 
         # Check for duplicate simulation numbers after merging
         if (
@@ -471,30 +463,67 @@ class SimulationBundle:
         self.inputs = merged_inputs
 
         # Merge results as DataFrames
-        self.results = self.results.vstack(other_bundle.results)
+        self.results = pl.concat([self.results, other_bundle.results])
 
         # Merge distances DataFrames directly
-        self.distances = self.distances.vstack(other_bundle.distances).unique(
-            subset=["simulation"]
-        )
+        self.distances = pl.concat([self.distances, other_bundle.distances])
 
         # Merge accepted simulations DataFrames directly
-        self.accepted = self.accepted.vstack(other_bundle.accepted).unique(
-            subset=["simulation"]
-        )
+        self.accepted = pl.concat([self.accepted, other_bundle.accepted])
 
         # Merge acceptance weights DataFrames directly
-        self.acceptance_weights = self.acceptance_weights.vstack(
-            other_bundle.acceptance_weights
-        ).unique(subset=["simulation"])
+        self.acceptance_weights = pl.concat(
+            [self.acceptance_weights, other_bundle.acceptance_weights]
+        )
 
         # Merge summary metrics DataFrames directly
-        self.summary_metrics = self.summary_metrics.vstack(
-            other_bundle.summary_metrics
-        ).unique(subset=["simulation"])
+        self.summary_metrics = pl.concat(
+            [self.summary_metrics, other_bundle.summary_metrics]
+        )
 
         # Record the merge event in the history
         current_merge_index = len(self.merge_history) + 1
         number_merged = len(other_bundle.inputs)
 
         self.merge_history[current_merge_index] = number_merged
+
+
+def apply_per_group_preserve_key(
+    df: pl.DataFrame,
+    key: str,
+    user_udf: Callable[[pl.DataFrame], pl.DataFrame],
+    *args,
+    result_column: str = "result",  # Specify the column name for scalar outputs
+    **kwargs
+) -> pl.DataFrame:
+    """
+    Apply a user-defined function to each group of a DataFrame, preserving the key column.
+    NOTE: This is surprisingly a bit tricky in polars, and a better solution is welcome.
+    Handles both DataFrame and scalar outputs from the user-defined function.
+
+    Args:
+        df (pl.DataFrame): The input DataFrame.
+        key (str): The column to group by.
+        user_udf (Callable): The user-defined function to apply to each group.
+        result_column (str): The column name to use if the user_udf returns a scalar.
+        *args, **kwargs: Additional arguments to pass to the user_udf.
+
+    Returns:
+        pl.DataFrame: A DataFrame with the key column and the results of the user_udf.
+    """
+    parts = df.partition_by(key)
+    mapped_parts = []
+
+    for part in parts:
+        result = user_udf(part, *args, **kwargs)
+        if not isinstance(result, pl.DataFrame):
+            # Wrap scalar output in a DataFrame
+            result = pl.DataFrame({result_column: [result]})
+        # Add the key column to the result
+        result = result.with_columns(pl.lit(part[key][0]).alias(key))
+        mapped_parts.append(result)
+
+    # Concatenate all parts and reorder columns to place the key first
+    result = pl.concat(mapped_parts, how="vertical")
+    columns = [key] + [col for col in result.columns if col != key]
+    return result.select(columns)
