@@ -17,7 +17,7 @@ def draw_simulation_parameters(
     add_random_seed: bool = True,
     add_simulation_id: bool = True,
     starting_simulation_number: int = 0,
-    seed=None,
+    seed=random.randint(0, 2**32 - 1),
     replicates_per_particle=1,
 ) -> pl.DataFrame:
     """
@@ -136,7 +136,7 @@ def resample(
         perturbation_kernels (dict): Dictionary of perturbation kernels for each parameter.
         prior_distributions (dict): Dictionary of prior distributions for each parameter.
         weights (pl.DataFrame or None): Optional DataFrame of weights for each accepted simulation. If None, uniform weighting is assumed.
-        add_random_seed (bool): If True, adds a 'random_seed' column with randomly generated numbers.
+        add_random_seed (bool): If True, adds a 'randomSeed' column with randomly generated numbers.
         starting_simulation_number (int): Starting number for new simulation IDs.
         seed (int): Random seed passed in to ensure consistency between runs.
 
@@ -144,113 +144,145 @@ def resample(
         pl.DataFrame: DataFrame containing resampled and possibly perturbed parameters.
     """
     if seed is not None:
-        random.seed(seed)
         np.random.seed(seed)
+        random.seed(seed)
 
-    # Prepare list to hold new samples
-    new_samples = []
-
-    # Normalize weights if provided (just to be safe)
-    if not weights.is_empty():
-        total_weight = weights["weight"].sum()
+    if weights is not None and not weights.is_empty():
         weights = weights.with_columns(
-            (pl.col("weight") / total_weight).alias("weight")
+            (pl.col("weight") / pl.col("weight").sum()).alias(
+                "normalized_weight"
+            )
         )
-        sim_numbers = weights["simulation"].to_list()
-        weights = weights["weight"].to_list()
+        accepted_simulations = accepted_simulations.join(
+            weights.select(["simulation", "normalized_weight"]),
+            on="simulation",
+            how="left",
+        )
+        sampling_weights = accepted_simulations["normalized_weight"].fill_null(
+            1.0 / len(accepted_simulations)
+        )
     else:
-        sim_numbers = accepted_simulations["simulation"].to_list()
-        weights = [1 / len(sim_numbers)] * len(sim_numbers)
+        sampling_weights = pl.Series(
+            [1.0 / len(accepted_simulations)] * len(accepted_simulations)
+        )
 
-    # Resampling loop
-    for _ in range(n_samples):
-        # Select a random index based on weights
-        chosen_index = random.choices(sim_numbers, weights=weights, k=1)[0]
-
-        # Retrieve the chosen parameters
-        chosen_params = accepted_simulations.filter(
-            pl.col("simulation") == chosen_index
-        ).to_dicts()[0]
-
-        # Perturb each parameter using its respective kernel and check against prior distribution
-        selected_params = {}
-
-        # Perturb and test against prior distribution, if specified
-        for param_name, value in chosen_params.items():
-            if param_name == "simulation":
-                continue
-            if perturbation_kernels and prior_distributions:
-                kernel_dist = perturbation_kernels.get(param_name)
-                prior_dist = prior_distributions.get(param_name)
-
-                if kernel_dist is not None:
-                    # Apply perturbation until a valid sample within the prior distribution is obtained
-                    while True:
-                        perturbed_value = value + kernel_dist.rvs()
-                        if (
-                            prior_dist.pdf(perturbed_value) > 0
-                        ):  # Check if within prior distribution
-                            break
-
-                    selected_params[param_name] = perturbed_value
-
-                else:
-                    raise ValueError(
-                        f"No perturbation kernel provided for {param_name}."
-                    )
-            else:
-                selected_params[param_name] = value
-
-        new_samples.append(selected_params)
-
-    n_simulations = n_samples * replicates_per_sample
-
-    # Create resampled dataframe
-    resampled_df = pl.DataFrame(new_samples)
-
-    # Ensure all columns have appropriate data types
-    resampled_df = resampled_df.with_columns(
-        [
-            pl.col(col_name).cast(pl.Float64)
-            if resampled_df[col_name].dtype == pl.Object
-            else pl.col(col_name)
-            for col_name in resampled_df.columns
-        ]
+    # Sample 'simulation' values with replacement using sampling weights
+    sampled_simulations = random.choices(
+        accepted_simulations["simulation"].to_list(),
+        weights=sampling_weights.to_list(),
+        k=n_samples,
+    )
+    # Filter rows based on sampled 'simulation' values
+    sampled_simulations_df = accepted_simulations.filter(
+        pl.col("simulation").is_in(sampled_simulations)
     )
 
-    # Repeat rows by replicates_per_sample and flatten the DataFrame
-    resampled_df = resampled_df.select(
-        pl.all().repeat_by(replicates_per_sample).flatten()
-    )
+    # Apply perturbations
+    if perturbation_kernels and prior_distributions:
+        sampled_simulations_df = apply_perturbations(
+            sampled_simulations_df, perturbation_kernels, prior_distributions
+        )
 
-    # Add 'simulation' column starting at desired number
+    # Repeat rows by replicates_per_sample
+    if replicates_per_sample > 1:
+        resampled_df = sampled_simulations_df.select(
+            pl.all().repeat_by(replicates_per_sample).flatten()
+        )
+    else:
+        resampled_df = sampled_simulations_df
+
+    # Add simulation column starting at specified number
     resampled_df = resampled_df.with_columns(
         pl.Series(
             "simulation",
             np.arange(
                 starting_simulation_number,
-                starting_simulation_number + n_simulations,
+                starting_simulation_number + len(resampled_df),
             ),
         )
     )
 
     if add_random_seed:
         # Add a random seed column with integers between 0 and 2^32 - 1
-        seed_column = [
-            random.randint(0, 2**32 - 1) for _ in range(n_simulations)
-        ]
         resampled_df = resampled_df.with_columns(
-            pl.Series("randomSeed", seed_column)
+            pl.Series(
+                "randomSeed",
+                np.random.randint(0, 2**32 - 1, size=len(resampled_df)),
+            )
         )
 
+    # Drop any *weight columns if they exist
+    resampled_df = resampled_df.drop(
+        [col for col in resampled_df.columns if "weight" in col]
+    )
+
     return resampled_df
+
+
+def apply_perturbations(
+    df: pl.DataFrame,
+    perturbation_kernels: dict,
+    prior_distributions: dict,
+    seed: int = None,
+) -> pl.DataFrame:
+    """
+    Applies perturbations to parameters using kernels and ensures validity within prior distributions.
+
+    Args:
+        df (pl.DataFrame): DataFrame of parameters to perturb.
+        perturbation_kernels (dict): Dictionary of perturbation kernels for each parameter.
+        prior_distributions (dict): Dictionary of prior distributions for each parameter.
+        seed (int): Random seed for reproducibility.
+    Returns:
+        pl.DataFrame: DataFrame with perturbed parameters.
+    """
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)  # Set the global NumPy random seed
+
+    def perturb_column(values, kernel, prior, base_seed):
+        """Perturb an entire column of values."""
+        perturbed_values = []
+        for i, value in enumerate(values):
+            rng = np.random.default_rng(
+                base_seed + i
+            )  # Create a unique RNG for each element
+            while True:
+                perturbed_value = value + kernel.rvs(random_state=rng)
+                if (
+                    prior.pdf(perturbed_value) > 0
+                ):  # Ensure the value is valid within the prior
+                    perturbed_values.append(perturbed_value)
+                    break
+        return perturbed_values
+
+    # Iterate over each parameter column and apply perturbations
+    for param_name in df.columns:
+        if (
+            param_name in perturbation_kernels
+            and param_name in prior_distributions
+        ):
+            kernel = perturbation_kernels[param_name]
+            prior = prior_distributions[param_name]
+
+            # Use a deterministic seed for the column if `seed` is provided
+            column_seed = (
+                seed if seed is not None else np.random.randint(0, 2**32 - 1)
+            )
+
+            # Apply perturbation to the column
+            perturbed_values = perturb_column(
+                df[param_name].to_numpy(), kernel, prior, column_seed
+            )
+            df = df.with_columns(pl.Series(param_name, perturbed_values))
+
+    return df
 
 
 def calculate_weights_abcsmc(
     current_accepted: pl.DataFrame,
     prev_step_accepted: pl.DataFrame,
     prev_weights: pl.DataFrame,
-    stochastic_acceptance_weights: pl.DataFrame,
     prior_distributions: dict,
     perturbation_kernels: dict,
     normalize: bool = True,
@@ -259,10 +291,9 @@ def calculate_weights_abcsmc(
     Calculate weights for simulations in steps t > 0 of an ABC SMC algorithm (Toni et al. 2009)
 
     Args:
-        current_accepted (pl.DataFrame): Accepted simulations for the current step.
+        current_accepted (pl.DataFrame): Accepted simulations for the current step
         prev_step_accepted (pl.DataFrame): Accepted simulations from the previous step.
         prev_weights (pl.DataFrame): Weights for each simulation from the previous step.
-        stochastic_acceptance_weights (pl.DataFrame): DataFrame of stochastic acceptance weights for each simulation.
         prior_distributions (dict): Dictionary containing prior distribution objects for each parameter.
         perturbation_kernels (dict): Dictionary containing scipy.stats distributions used as perturbation kernels for each parameter.
         normalize (bool): If True, normalize the weights so they sum to 1.
@@ -285,7 +316,7 @@ def calculate_weights_abcsmc(
         # Calculate numerator
         numerator = 1.0
         for param_name, param_value in params.items():
-            if param_name == "simulation":
+            if param_name in ["simulation", "acceptance_weight"]:
                 continue
             prior_dist = prior_distributions[param_name]
             numerator *= prior_dist.pdf(param_value)
@@ -298,7 +329,7 @@ def calculate_weights_abcsmc(
 
             kernel_product = 1.0
             for param_name in params.keys():
-                if param_name == "simulation":
+                if param_name in ["simulation", "acceptance_weight"]:
                     continue
                 if param_name in perturbation_kernels:
                     kernel_dist = perturbation_kernels[param_name]
@@ -315,8 +346,10 @@ def calculate_weights_abcsmc(
         weight = numerator / denominator if denominator != 0 else 0
 
         # Retrieve stochastic acceptance weight from DataFrame
-        stochastic_weight = stochastic_acceptance_weights.filter(
-            pl.col("simulation") == sim_number
+        stochastic_weight = current_accepted.join(
+            pl.DataFrame({"simulation": [sim_number]}),
+            on="simulation",
+            how="inner",
         )["acceptance_weight"][0]
 
         # Store calculated weight
