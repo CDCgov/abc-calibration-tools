@@ -172,9 +172,12 @@ def resample(
         weights=sampling_weights.to_list(),
         k=n_samples,
     )
-    # Filter rows based on sampled 'simulation' values
-    sampled_simulations_df = accepted_simulations.filter(
-        pl.col("simulation").is_in(sampled_simulations)
+    # Filter rows based on sampled 'simulation' values, ensuring duplicates are included
+    sampled_simulations_df = pl.concat(
+        [
+            accepted_simulations.filter(pl.col("simulation") == sim)
+            for sim in sampled_simulations
+        ]
     )
 
     # Apply perturbations
