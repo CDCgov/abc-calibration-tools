@@ -225,7 +225,7 @@ class TestABCPipeline(unittest.TestCase):
                             prior_distributions=self.experiment_params_prior_dist,
                             weights=sim_bundles[step_number - 1].weights,
                         )
-                        self.assertEqual(input_df.shape[0], self.n_init)
+                        self.assertEqual(len(input_df), self.n_init)
                 else:
                     with self.subTest(f"Resample, final step #{step_number}"):
                         input_df = abc_methods.resample(
