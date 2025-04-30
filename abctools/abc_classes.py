@@ -27,7 +27,6 @@ class SimulationBundle:
         weights (pl.DataFrame): Simulation weights for resampling
         merge_history (dict): History of merges with other SimulationBundle objects
         summary_metrics (pl.DataFrame): Summary metrics calculated for each simulation
-        acceptance_weights (pl.DataFrame): Weights for accepted simulations
         accept_results (pl.DataFrame): DataFrame of accepted results
     """
 
@@ -57,7 +56,6 @@ class SimulationBundle:
         self.results = pl.DataFrame()
         self.distances = pl.DataFrame()
         self.accepted = pl.DataFrame()
-        self.acceptance_weights = pl.DataFrame()
         self.weights = pl.DataFrame()
         self.summary_metrics = None
         self.seed_variable_name = seed_variable_name
@@ -286,11 +284,6 @@ class SimulationBundle:
         if self.seed_variable_name in self.accepted.columns:
             self.accepted = self.accepted.drop(self.seed_variable_name)
 
-        # Create acceptance weights DataFrame
-        self.acceptance_weights = self.accepted.with_columns(
-            pl.lit(1.0).alias("acceptance_weight")
-        )
-
     def accept_stochastic(
         self,
         tolerance,
@@ -316,46 +309,27 @@ class SimulationBundle:
         self.collate_accept_results()
 
         # Group by parameters besides simulation and random seed
-        particle_prop_accepted = self.accept_results.group_by(
-            self.inputs.drop(["simulation", self.seed_variable_name]).columns
-        ).agg(
-            pl.col("accept_bool").mean().alias("acceptance_weight"),
-            pl.col("simulation").min().alias("simulation"),
+        accepted_df = (
+            self.accept_results.group_by(
+                self.inputs.drop(
+                    ["simulation", self.seed_variable_name]
+                ).columns
+            )
+            .agg(
+                [
+                    pl.col("accept_bool").mean().alias("acceptance_weight"),
+                    pl.col("simulation").min().alias("simulation"),
+                ]
+            )
+            .filter(
+                pl.col("acceptance_weight") > 0
+            )  # Filter particles with accepted count > 0
+            .sort("simulation")
         )
 
-        # filter particles with accepted count > 0
-        particle_prop_accepted = particle_prop_accepted.filter(
-            pl.col("acceptance_weight") > 0
-        )
+        self.accepted = accepted_df
 
-        accepted_list = []
-        acceptance_weights_list = []
-
-        # Create acceptance weights (to be included in the weights assignment) and params dict
-        for row in particle_prop_accepted.rows(named=True):
-            acceptance_weights_list.append(
-                {
-                    "simulation": row["simulation"],
-                    "acceptance_weight": row["acceptance_weight"],
-                }
-            )
-
-            # Extract parameters and convert to dictionary
-            params_dict = (
-                self.inputs.filter(pl.col("simulation") == row["simulation"])
-                .drop(["simulation", self.seed_variable_name])
-                .to_dicts()[0]
-            )
-
-            # Add simulation ID to the parameters dictionary
-            params_dict["simulation"] = row["simulation"]
-
-            accepted_list.append(params_dict)
-
-        self.acceptance_weights = pl.DataFrame(acceptance_weights_list)
-        self.accepted = pl.DataFrame(accepted_list)
-
-    def accept_proportion(self, proportion):
+    def accept_proportion(self, proportion: float):
         """
         Accepts a specified proportion of simulations with the smallest distances.
         This method ranks all simulations by their distance values in ascending order
@@ -382,30 +356,15 @@ class SimulationBundle:
         # Sort simulations by distance in ascending order and select the best ones
         sorted_distances = self.distances.sort("distance").head(num_to_accept)
 
-        accepted_list = []
-        acceptance_weights_list = []
+        # Filter the accepted parameters, remove simulation and seed columns
+        accepted_params = self.inputs.filter(
+            pl.col("simulation").is_in(sorted_distances["simulation"])
+        ).drop(["simulation", self.seed_variable_name], None)
 
-        # Accept only the top-performing simulations as determined by the specified proportion
-        for row in sorted_distances.rows(named=True):
-            # Retrieve and clean input parameters for each accepted simulation
-            accepted_params = self.inputs.filter(
-                pl.col("simulation") == row["simulation"]
-            )
-            if "simulation" in accepted_params.columns:
-                accepted_params = accepted_params.drop("simulation")
-            if self.seed_variable_name in accepted_params.columns:
-                accepted_params = accepted_params.drop(self.seed_variable_name)
-
-            # Store parameters of accepted simulations in an attribute for later use or analysis
-            accepted_list.append(
-                {"simulation": row["simulation"], "params": accepted_params}
-            )
-            acceptance_weights_list.append(
-                {"simulation": row["simulation"], "acceptance_weight": 1.0}
-            )
-
-        self.accepted = pl.DataFrame(accepted_list)
-        self.acceptance_weights = pl.DataFrame(acceptance_weights_list)
+        # Create accepted dataframe
+        self.accepted = sorted_distances.join(
+            accepted_params, on="simulation", how="left"
+        ).with_columns(pl.lit(1.0).alias("acceptance_weight"))
 
     def collate_accept_results(self):
         """
@@ -470,11 +429,6 @@ class SimulationBundle:
 
         # Merge accepted simulations DataFrames directly
         self.accepted = pl.concat([self.accepted, other_bundle.accepted])
-
-        # Merge acceptance weights DataFrames directly
-        self.acceptance_weights = pl.concat(
-            [self.acceptance_weights, other_bundle.acceptance_weights]
-        )
 
         # Merge summary metrics DataFrames directly
         self.summary_metrics = pl.concat(

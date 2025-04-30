@@ -1,8 +1,10 @@
 import math
 import os
+import random
 import unittest
 
 import matplotlib.pyplot as plt
+import numpy as np
 import polars as pl
 from scipy.stats import uniform
 
@@ -11,6 +13,8 @@ from abctools.abc_classes import SimulationBundle
 
 # Set random seed
 random_seed = 12345
+random.seed(random_seed)
+np.random.seed(random.randint(0, 2**32 - 1))
 
 
 def run_toy_model(params: dict):
@@ -204,7 +208,7 @@ class TestABCPipeline(unittest.TestCase):
                         params_inputs=self.experiment_params_prior_dist,
                         n_parameter_sets=self.n_init,
                         add_random_seed=self.stochastic,
-                        seed=random_seed,
+                        seed=random.randint(0, 2**32 - 1),
                     )
                     self.assertEqual(input_df.shape[0], self.n_init)
             else:
@@ -220,7 +224,6 @@ class TestABCPipeline(unittest.TestCase):
                             perturbation_kernels=self.perturbation_kernels,
                             prior_distributions=self.experiment_params_prior_dist,
                             weights=sim_bundles[step_number - 1].weights,
-                            seed=random_seed,
                         )
                         self.assertEqual(input_df.shape[0], self.n_init)
                 else:
@@ -230,7 +233,6 @@ class TestABCPipeline(unittest.TestCase):
                             n_samples=self.n_init,
                             replicates_per_sample=1,
                             weights=sim_bundles[step_number - 1].weights,
-                            seed=random_seed,
                         )
                         self.assertEqual(input_df.shape[0], self.n_init)
 
@@ -305,7 +307,7 @@ class TestABCPipeline(unittest.TestCase):
                             n_parameter_sets=n_additional,
                             add_random_seed=self.stochastic,
                             starting_simulation_number=sim_bundle.n_simulations,
-                            seed=random_seed,
+                            seed=random.randint(0, 2**32 - 1),
                         )
                     else:
                         additional_input_df = abc_methods.resample(
@@ -315,7 +317,6 @@ class TestABCPipeline(unittest.TestCase):
                             prior_distributions=self.experiment_params_prior_dist,
                             weights=sim_bundles[step_number - 1].weights,
                             starting_simulation_number=sim_bundle.n_simulations,
-                            seed=random_seed,
                         )
 
                     print(
@@ -380,6 +381,7 @@ class TestABCPipeline(unittest.TestCase):
                     sim_bundle.n_accepted,
                 )
 
+                print()
                 # Check that distance values with accepted_sim == True are less than or equal to tolerance
                 accept_above_max = sim_bundle.accept_results.filter(
                     pl.col("accept_bool")
@@ -397,13 +399,11 @@ class TestABCPipeline(unittest.TestCase):
                 else:
                     prev_step_accepted = sim_bundles[step_number - 1].accepted
                     prev_step_weights = sim_bundles[step_number - 1].weights
-                    accept_ratio_weights = sim_bundle.acceptance_weights
 
                     weights = abc_methods.calculate_weights_abcsmc(
                         current_accepted=sim_bundle.accepted,
                         prev_step_accepted=prev_step_accepted,
                         prev_weights=prev_step_weights,
-                        stochastic_acceptance_weights=accept_ratio_weights,
                         prior_distributions=self.experiment_params_prior_dist,
                         perturbation_kernels=self.perturbation_kernels,
                         normalize=True,
