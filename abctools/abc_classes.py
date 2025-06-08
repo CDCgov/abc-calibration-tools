@@ -27,7 +27,6 @@ class SimulationBundle:
         weights (pl.DataFrame): Simulation weights for resampling
         merge_history (dict): History of merges with other SimulationBundle objects
         summary_metrics (pl.DataFrame): Summary metrics calculated for each simulation
-        accept_results (pl.DataFrame): DataFrame of accepted results
     """
 
     def __init__(
@@ -177,11 +176,11 @@ class SimulationBundle:
                     "Warning: results_df does not contain all the simulation numbers from inputs."
                 )
 
+        self.results = results_df
+
         # Recover params if applicable
         if merge_params:
             self.merge_params()
-
-        self.results = results_df
 
     def merge_params(self):
         """
@@ -274,11 +273,9 @@ class SimulationBundle:
             raise ValueError("Distances have not been calculated.")
 
         # Filter and join to get accepted parameters
-        self.accepted = (
-            self.distances.filter(pl.col("distance") <= tolerance)
-            .join(self.inputs, on="simulation")
-            .drop("distance")
-        )
+        self.accepted = self.distances.filter(
+            pl.col("distance") <= tolerance
+        ).join(self.inputs, on="simulation")
 
         # Drop 'randomSeed' columns if present
         if self.seed_variable_name in self.accepted.columns:
@@ -305,29 +302,26 @@ class SimulationBundle:
         if self.distances.is_empty():
             raise ValueError("Distances have not been calculated.")
 
-        self.accept_reject(tolerance)
-        self.collate_accept_results()
-
-        # Group by parameters besides simulation and random seed
-        accepted_df = (
-            self.accept_results.group_by(
+        self.accept_reject("tolerance")
+        self.accepted = (
+            self.accepted.group_by(
                 self.inputs.drop(
                     ["simulation", self.seed_variable_name]
                 ).columns
             )
             .agg(
                 [
-                    pl.col("accept_bool").mean().alias("acceptance_weight"),
+                    pl.len().alias("accepted_per_particle"),
+                    pl.col("distance").mean().alias("average_distance"),
                     pl.col("simulation").min().alias("simulation"),
                 ]
             )
-            .filter(
-                pl.col("acceptance_weight") > 0
-            )  # Filter particles with accepted count > 0
-            .sort("simulation")
+            .with_columns(
+                (pl.col("accepted_per_particle") / self.replicates_per_sample)
+                .alias("acceptance_weight")
+                .sort("simulation")
+            )
         )
-
-        self.accepted = accepted_df
 
     def accept_proportion(self, proportion: float):
         """
@@ -365,34 +359,6 @@ class SimulationBundle:
         self.accepted = sorted_distances.join(
             accepted_params, on="simulation", how="left"
         ).with_columns(pl.lit(1.0).alias("acceptance_weight"))
-
-    def collate_accept_results(self):
-        """
-        Makes a single DataFrame attribute from ABC results of accepted, distance, and inputs.
-        Args:
-            self
-        Returns:
-            None
-        Raises:
-            ValueError: if accept is not previously calculated
-        """
-
-        # Ensure accept is already calculated
-        if self.accepted.is_empty():
-            raise ValueError("Accept has not been calculated.")
-
-        # Joining results with inputs
-        distance_results = self.inputs.join(
-            self.distances.select(["simulation", "distance"]),
-            on="simulation",
-            how="left",
-        )
-
-        # Adding logical column whether an input was accepted and storing as self attribute
-        accepted_sims = self.accepted["simulation"].to_list()
-        self.accept_results = distance_results.with_columns(
-            pl.col("simulation").is_in(accepted_sims).alias("accept_bool")
-        )
 
     def merge_with(self, other_bundle):
         """
@@ -473,6 +439,13 @@ def apply_per_group_preserve_key(
         if not isinstance(result, pl.DataFrame):
             # Wrap scalar output in a DataFrame
             result = pl.DataFrame({result_column: [result]})
+
+        # Check that the result is a scalar because arrays dictionaries lists shouldn't be allowed
+        if result.shape[1] > 1:
+            raise ValueError(
+                "The user-defined function must return a scalar or a DataFrame with one column."
+            )
+
         # Add the key column to the result
         result = result.with_columns(pl.lit(part[key][0]).alias(key))
         mapped_parts.append(result)
