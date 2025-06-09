@@ -8,7 +8,8 @@ This repo provides flexible tools to calibrate models using approximate Bayesian
 
 ## Project Admin
 
-Chris Valleau, MPH, pwl3@cdc.gov, CDC/IOD/ORR/CFA
+Community Mitigation and Economic Impacts Team, CDC/IOD/ORR/CFA
+Point of contact: Will Koval, AD71@cdc.gov, CDC/IOD/ORR/CFA
 
 ## General Disclaimer
 This repository was created for use by CDC programs to collaborate on public health related projects in support of the [CDC mission](https://www.cdc.gov/about/organization/mission.htm).  GitHub is not hosted by the CDC, but is a third party website used by CDC and its partners to share information and collaborate on software. CDC use of GitHub does not imply an endorsement of any one particular service, product, or enterprise.
