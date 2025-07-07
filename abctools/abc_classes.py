@@ -92,7 +92,7 @@ class SimulationBundle:
     @property
     def n_accepted(self) -> int:
         """Getter for number of accepted simulations"""
-        return len(self.accepted)
+        return len(self.get_accepted())
 
     @property
     def writer_input_dict(self) -> dict:
@@ -258,6 +258,25 @@ class SimulationBundle:
             target_data=target_data,
         )
 
+    def get_accepted(self, one_rep_per_parset: bool = False):
+        if self.accepted.is_empty():
+            raise ValueError(
+                "Accepted simulations have not been determined yet."
+            )
+        if one_rep_per_parset:
+            return (
+                self.accepted.filter(pl.col("accept_bool"))
+                .group_by(
+                    self.inputs.drop(
+                        ["simulation", self.seed_variable_name]
+                    ).columns
+                )
+                .agg([pl.col("simulation").min()])
+                .drop("simulation")
+            )
+        else:
+            return self.accepted.filter(pl.col("accept_bool"))
+
     def accept_reject(self, tolerance):
         """
         Accepts or rejects simulations based on the calculated distances and given tolerance level.
@@ -274,15 +293,9 @@ class SimulationBundle:
             raise ValueError("Distances have not been calculated.")
 
         # Filter and join to get accepted parameters
-        self.accepted = (
-            self.distances.filter(pl.col("distance") <= tolerance)
-            .join(self.inputs, on="simulation")
-            .drop("distance")
-        )
-
-        # Drop 'randomSeed' columns if present
-        if self.seed_variable_name in self.accepted.columns:
-            self.accepted = self.accepted.drop(self.seed_variable_name)
+        self.accepted = self.distances.with_columns(
+            (pl.col("distance") <= tolerance).alias("accept_bool")
+        ).join(self.inputs, on="simulation")
 
     def accept_stochastic(
         self,
@@ -306,28 +319,24 @@ class SimulationBundle:
             raise ValueError("Distances have not been calculated.")
 
         self.accept_reject(tolerance)
-        self.collate_accept_results()
 
         # Group by parameters besides simulation and random seed
-        accepted_df = (
-            self.accept_results.group_by(
-                self.inputs.drop(
-                    ["simulation", self.seed_variable_name]
-                ).columns
-            )
+        param_names = self.inputs.drop(
+            ["simulation", self.seed_variable_name]
+        ).columns
+
+        self.accepted = (
+            self.accepted.group_by(param_names)
             .agg(
                 [
                     pl.col("accept_bool").mean().alias("acceptance_weight"),
-                    pl.col("simulation").min().alias("simulation"),
                 ]
             )
             .filter(
                 pl.col("acceptance_weight") > 0
             )  # Filter particles with accepted count > 0
-            .sort("simulation")
+            .join(self.accepted, on=param_names, how="full")
         )
-
-        self.accepted = accepted_df
 
     def accept_proportion(self, proportion: float):
         """
@@ -365,34 +374,6 @@ class SimulationBundle:
         self.accepted = sorted_distances.join(
             accepted_params, on="simulation", how="left"
         ).with_columns(pl.lit(1.0).alias("acceptance_weight"))
-
-    def collate_accept_results(self):
-        """
-        Makes a single DataFrame attribute from ABC results of accepted, distance, and inputs.
-        Args:
-            self
-        Returns:
-            None
-        Raises:
-            ValueError: if accept is not previously calculated
-        """
-
-        # Ensure accept is already calculated
-        if self.accepted.is_empty():
-            raise ValueError("Accept has not been calculated.")
-
-        # Joining results with inputs
-        distance_results = self.inputs.join(
-            self.distances.select(["simulation", "distance"]),
-            on="simulation",
-            how="left",
-        )
-
-        # Adding logical column whether an input was accepted and storing as self attribute
-        accepted_sims = self.accepted["simulation"].to_list()
-        self.accept_results = distance_results.with_columns(
-            pl.col("simulation").is_in(accepted_sims).alias("accept_bool")
-        )
 
     def merge_with(self, other_bundle):
         """

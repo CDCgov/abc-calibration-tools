@@ -18,6 +18,7 @@ def draw_simulation_parameters(
     add_simulation_id: bool = True,
     starting_simulation_number: int = 0,
     seed=random.randint(0, 2**32 - 1),
+    seed_variable_name: str = "randomSeed",
     replicates_per_particle=1,
 ) -> pl.DataFrame:
     """
@@ -27,7 +28,7 @@ def draw_simulation_parameters(
         params_inputs (dict): Dictionary containing parameters and their distributions.
         n_parameter_sets (int): Number of simulations to perform.
         method (str): Sampling method ("random", "sobol", or "latin_hypercube").
-        add_random_seed (bool): If True, adds a 'randomSeed' column with randomly generated numbers.
+        add_random_seed (bool): If True, adds a random seed column with randomly generated numbers.
         add_simulation_id (bool): If True, adds a 'simulation' column with simulation IDs starting from `starting_simulation_number`.
         starting_simulation_number (int): The number at which to start numbering simulations. Defaults to 0.
         seed (int): Random seed passed in to ensure consistency between runs.
@@ -92,7 +93,7 @@ def draw_simulation_parameters(
             random.randint(0, 2**32) for _ in range(n_simulations)
         ]
         simulation_parameters_df = simulation_parameters_df.with_columns(
-            pl.Series("randomSeed", seed_column)
+            pl.Series(seed_variable_name, seed_column)
         )
 
     # If specified, add a simulation ID column with integers from `starting_simulation_number` to `starting_simulation_number + n_parameter_sets - 1`
@@ -125,6 +126,7 @@ def resample(
     add_random_seed: bool = True,
     starting_simulation_number: int = 0,
     seed: int = None,
+    seed_variable_name: str = "randomSeed",
 ) -> pl.DataFrame:
     """
     Resamples parameters from accepted simulations with optional perturbation and reweighting.
@@ -136,7 +138,7 @@ def resample(
         perturbation_kernels (dict): Dictionary of perturbation kernels for each parameter.
         prior_distributions (dict): Dictionary of prior distributions for each parameter.
         weights (pl.DataFrame or None): Optional DataFrame of weights for each accepted simulation. If None, uniform weighting is assumed.
-        add_random_seed (bool): If True, adds a 'randomSeed' column with randomly generated numbers.
+        add_random_seed (bool): If True, adds a random seed column with randomly generated numbers.
         starting_simulation_number (int): Starting number for new simulation IDs.
         seed (int): Random seed passed in to ensure consistency between runs.
 
@@ -157,9 +159,6 @@ def resample(
             weights.select(["simulation", "normalized_weight"]),
             on="simulation",
             how="left",
-        )
-        sampling_weights = accepted_simulations["normalized_weight"].fill_null(
-            1.0 / len(accepted_simulations)
         )
     else:
         sampling_weights = pl.Series(
@@ -209,7 +208,7 @@ def resample(
         # Add a random seed column with integers between 0 and 2^32 - 1
         resampled_df = resampled_df.with_columns(
             pl.Series(
-                "randomSeed",
+                seed_variable_name,
                 np.random.randint(0, 2**32 - 1, size=len(resampled_df)),
             )
         )

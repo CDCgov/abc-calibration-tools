@@ -218,7 +218,7 @@ class TestABCPipeline(unittest.TestCase):
                         f"Resample, step #{step_number} (includes perturbation and validation checks against prior distributions"
                     ):
                         input_df = abc_methods.resample(
-                            sim_bundles[step_number - 1].accepted,
+                            sim_bundles[step_number - 1].get_accepted(),
                             n_samples=self.n_init,
                             replicates_per_sample=1,
                             perturbation_kernels=self.perturbation_kernels,
@@ -229,7 +229,7 @@ class TestABCPipeline(unittest.TestCase):
                 else:
                     with self.subTest(f"Resample, final step #{step_number}"):
                         input_df = abc_methods.resample(
-                            sim_bundles[step_number - 1].accepted,
+                            sim_bundles[step_number - 1].get_accepted(),
                             n_samples=self.n_init,
                             replicates_per_sample=1,
                             weights=sim_bundles[step_number - 1].weights,
@@ -284,7 +284,7 @@ class TestABCPipeline(unittest.TestCase):
                 sim_bundle.accept_stochastic(self.tolerance[step_number])
 
                 # Ensure at least one simulation is accepted
-                self.assertGreaterEqual(len(sim_bundle.accepted), 1)
+                self.assertGreaterEqual(len(sim_bundle.get_accepted()), 1)
 
             with self.subTest(
                 f"Check Accepted Simulations and Run/Check/Merge Additional if Needed, step #{step_number}"
@@ -311,7 +311,7 @@ class TestABCPipeline(unittest.TestCase):
                         )
                     else:
                         additional_input_df = abc_methods.resample(
-                            sim_bundles[step_number - 1].accepted,
+                            sim_bundles[step_number - 1].get_accepted(),
                             n_samples=n_additional,
                             perturbation_kernels=self.perturbation_kernels,
                             prior_distributions=self.experiment_params_prior_dist,
@@ -391,17 +391,19 @@ class TestABCPipeline(unittest.TestCase):
             with self.subTest(f"Calculate weights, step #{step_number}"):
                 if step_number == 0:
                     # Uniform weights on the initial step
-                    total_accepted = len(sim_bundle.accepted)
-                    weights = sim_bundle.accepted.select(
+                    total_accepted = sim_bundle.n_accepted
+                    weights = sim_bundle.get_accepted().select(
                         pl.col("simulation"),
                         (pl.lit(1.0) / total_accepted).alias("weight"),
                     )
                 else:
-                    prev_step_accepted = sim_bundles[step_number - 1].accepted
+                    prev_step_accepted = sim_bundles[
+                        step_number - 1
+                    ].get_accepted()
                     prev_step_weights = sim_bundles[step_number - 1].weights
 
                     weights = abc_methods.calculate_weights_abcsmc(
-                        current_accepted=sim_bundle.accepted,
+                        current_accepted=sim_bundle.get_accepted(),
                         prev_step_accepted=prev_step_accepted,
                         prev_weights=prev_step_weights,
                         prior_distributions=self.experiment_params_prior_dist,
