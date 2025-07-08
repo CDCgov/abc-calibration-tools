@@ -160,15 +160,16 @@ def resample(
             on="simulation",
             how="left",
         )
+        sampling_weights = accepted_simulations["normalized_weight"].to_list()
     else:
-        sampling_weights = pl.Series(
-            [1.0 / len(accepted_simulations)] * len(accepted_simulations)
+        sampling_weights = [1.0 / len(accepted_simulations)] * len(
+            accepted_simulations
         )
 
     # Sample 'simulation' values with replacement using sampling weights
     sampled_simulations = random.choices(
         accepted_simulations["simulation"].to_list(),
-        weights=sampling_weights.to_list(),
+        weights=sampling_weights,
         k=n_samples,
     )
     # Filter rows based on sampled 'simulation' values, ensuring duplicates are included
