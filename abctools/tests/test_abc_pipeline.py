@@ -3,7 +3,7 @@ import os
 import random
 import unittest
 
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
 from scipy.stats import uniform
@@ -232,6 +232,7 @@ class TestABCPipeline(unittest.TestCase):
                             sim_bundles[step_number - 1].get_accepted(),
                             n_samples=self.n_init,
                             replicates_per_sample=1,
+                            prior_distributions=self.experiment_params_prior_dist,
                             weights=sim_bundles[step_number - 1].weights,
                         )
                         self.assertEqual(input_df.shape[0], self.n_init)
@@ -282,7 +283,6 @@ class TestABCPipeline(unittest.TestCase):
                 f"Accept or Reject Simulations through accept_stochastic, step #{step_number}"
             ):
                 sim_bundle.accept_stochastic(self.tolerance[step_number])
-
                 # Ensure at least one simulation is accepted
                 self.assertGreaterEqual(len(sim_bundle.get_accepted()), 1)
 
@@ -392,15 +392,9 @@ class TestABCPipeline(unittest.TestCase):
                         (pl.lit(1.0) / total_accepted).alias("weight"),
                     )
                 else:
-                    prev_step_accepted = sim_bundles[
-                        step_number - 1
-                    ].get_accepted()
-                    prev_step_weights = sim_bundles[step_number - 1].weights
-
                     weights = abc_methods.calculate_weights_abcsmc(
-                        current_accepted=sim_bundle.get_accepted(),
-                        prev_step_accepted=prev_step_accepted,
-                        prev_weights=prev_step_weights,
+                        current=sim_bundle,
+                        previous=sim_bundles[step_number - 1],
                         prior_distributions=self.experiment_params_prior_dist,
                         perturbation_kernels=self.perturbation_kernels,
                         normalize=True,
@@ -457,74 +451,74 @@ class TestABCPipeline(unittest.TestCase):
                 )
                 fig.savefig(file_out)
 
-        with self.subTest("Make results plots"):
-            for step_number, sim_bundle in sim_bundles.items():
-                data_list = []
-                for summary_metrics in sim_bundle.summary_metrics.iter_rows(
-                    named=True
-                ):
-                    data_list.append(
-                        pl.DataFrame(
-                            {
-                                "time_to_peak_infection": [
-                                    summary_metrics["time_to_peak_infection"]
-                                ],
-                                "total_infected": [
-                                    summary_metrics["total_infected"]
-                                ],
-                            }
-                        )
-                    )
-                x_col = "time_to_peak_infection"
-                y_col = "total_infected"
-                plot_args_list = [
-                    {"color": "blue", "alpha": 0.10, "marker": "o"}
-                ] * len(data_list)
+        # with self.subTest("Make results plots"):
+        #     for step_number, sim_bundle in sim_bundles.items():
+        #         data_list = []
+        #         for summary_metrics in sim_bundle.summary_metrics.iter_rows(
+        #             named=True
+        #         ):
+        #             data_list.append(
+        #                 pl.DataFrame(
+        #                     {
+        #                         "time_to_peak_infection": [
+        #                             summary_metrics["time_to_peak_infection"]
+        #                         ],
+        #                         "total_infected": [
+        #                             summary_metrics["total_infected"]
+        #                         ],
+        #                     }
+        #                 )
+        #             )
+        #         x_col = "time_to_peak_infection"
+        #         y_col = "total_infected"
+        #         plot_args_list = [
+        #             {"color": "blue", "alpha": 0.10, "marker": "o"}
+        #         ] * len(data_list)
 
-                # Add target data
-                data_list.append(self.target_metrics)
-                plot_args_list.append(
-                    {"color": "red", "alpha": 0.9, "marker": "o"}
-                )
-                # Label axes
-                xlabel = "Time to peak infections"
-                ylabel = "Total Infections"
+        #         # Add target data
+        #         data_list.append(self.target_metrics)
+        #         plot_args_list.append(
+        #             {"color": "red", "alpha": 0.9, "marker": "o"}
+        #         )
+        #         # Label axes
+        #         xlabel = "Time to peak infections"
+        #         ylabel = "Total Infections"
 
-                # Plot
-                fig = plot_utils.plot_xy_data(
-                    data_list, x_col, y_col, plot_args_list, xlabel, ylabel
-                )
-                file_out = os.path.join(
-                    output_folder,
-                    f"target_metrics_step_{step_number}.jpg",
-                )
-                fig.savefig(file_out)
+        #         # Plot
+        #         fig = plot_utils.plot_xy_data(
+        #             data_list, x_col, y_col, plot_args_list, xlabel, ylabel
+        #         )
+        #         file_out = os.path.join(
+        #             output_folder,
+        #             f"target_metrics_step_{step_number}.jpg",
+        #         )
+        #         fig.savefig(file_out)
 
-            with self.subTest("Make parameter histograms"):
-                output_folder = "abctools/tests/figs/parameters"
-                if not os.path.exists(output_folder):
-                    os.makedirs(output_folder)
+        #     with self.subTest("Make parameter histograms"):
+        #         output_folder = "abctools/tests/figs/parameters"
+        #         if not os.path.exists(output_folder):
+        #             os.makedirs(output_folder)
 
-                for step_number, sim_bundle in sim_bundles.items():
-                    for experiment_param in sim_bundle.experiment_params:
-                        df = sim_bundle.inputs
-                        col = experiment_param
-                        vline_value = self.target_params[experiment_param]
+        #         for step_number, sim_bundle in sim_bundles.items():
+        #             for experiment_param in sim_bundle.experiment_params:
+        #                 df = sim_bundle.inputs
+        #                 col = experiment_param
+        #                 vline_value = self.target_params[experiment_param]
 
-                        plt.hist(df[col])
-                        plt.axvline(
-                            x=vline_value,
-                            color="red",
-                        )
-                        plt.xlabel(experiment_param)
-                        plt.ylabel("frequency")
+        #                 plt.hist(df[col])
+        #                 plt.axvline(
+        #                     x=vline_value,
+        #                     color="red",
+        #                 )
+        #                 plt.xlabel(experiment_param)
+        #                 plt.ylabel("frequency")
 
-                        file_out = os.path.join(
-                            output_folder,
-                            f"{experiment_param}_hist_step_{step_number}.jpg",
-                        )
-                        plt.savefig(file_out)
-                        plt.close()
+        #                 file_out = os.path.join(
+        #                     output_folder,
+        #                     f"{experiment_param}_hist_step_{step_number}.jpg",
+        #                 )
+        #                 plt.savefig(file_out)
+        #                 plt.close()
 
         with self.subTest("Posterior predictive check"):
             # TODO: add posterior predictive check

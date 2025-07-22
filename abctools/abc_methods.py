@@ -6,6 +6,8 @@ import numpy as np
 import polars as pl
 from scipy.stats import qmc, truncnorm
 
+from abctools.abc_classes import SimulationBundle
+
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
@@ -119,9 +121,9 @@ def draw_simulation_parameters(
 def resample(
     accepted_simulations: pl.DataFrame,
     n_samples: int,
+    prior_distributions: dict,
     replicates_per_sample: int = 1,
     perturbation_kernels: dict = None,
-    prior_distributions: dict = None,
     weights: pl.DataFrame = None,
     add_random_seed: bool = True,
     starting_simulation_number: int = 0,
@@ -213,11 +215,12 @@ def resample(
                 np.random.randint(0, 2**32 - 1, size=len(resampled_df)),
             )
         )
+    # Keep all columns
+    colnames = [k for k in prior_distributions.keys()]
+    colnames.append("simulation")
+    colnames.append(seed_variable_name)
 
-    # Drop any *weight columns if they exist
-    resampled_df = resampled_df.drop(
-        [col for col in resampled_df.columns if "weight" in col]
-    )
+    resampled_df = resampled_df.select(colnames)
 
     return resampled_df
 
@@ -283,9 +286,8 @@ def apply_perturbations(
 
 
 def calculate_weights_abcsmc(
-    current_accepted: pl.DataFrame,
-    prev_step_accepted: pl.DataFrame,
-    prev_weights: pl.DataFrame,
+    current: SimulationBundle,
+    previous: SimulationBundle,
     prior_distributions: dict,
     perturbation_kernels: dict,
     normalize: bool = True,
@@ -306,58 +308,46 @@ def calculate_weights_abcsmc(
     """
 
     # Ensure prev_weights weight column is numeric
-    prev_weights = prev_weights.with_columns(pl.col("weight").cast(pl.Float64))
+    prev_weights = previous.weights.with_columns(
+        pl.col("weight").cast(pl.Float64)
+    )
+    current_accepted = current.get_accepted()
+    prev_accepted = previous.get_accepted()
+    assert set(perturbation_kernels.keys()) == set(prior_distributions.keys())
 
     # Initialize list to store new weights
     new_weights = []
-
     # Loop over all accepted simulations in current step
-    for row in current_accepted.iter_rows(named=True):
-        sim_number = row["simulation"]
-        params = row
+    for current_particle in current_accepted.iter_rows(named=True):
+        prior_prob = 1.0
+        simulation_id = current_particle["simulation"]
+        for key in prior_distributions.keys():
+            prior_prob *= prior_distributions[key].pdf(current_particle[key])
+        # Multiply prior probability by proportion of simulations accepted
+        numerator = prior_prob * current_particle["acceptance_weight"]
 
-        # Calculate numerator
-        numerator = 1.0
-        for param_name, param_value in params.items():
-            if param_name in ["simulation", "acceptance_weight"]:
-                continue
-            prior_dist = prior_distributions[param_name]
-            numerator *= prior_dist.pdf(param_value)
-
-        # Calculate denominator: weighted sum over all previous particles' contribution
         denominator = 0.0
-        for prev_row in prev_step_accepted.iter_rows(named=True):
-            prev_sim_number = prev_row["simulation"]
-            prev_params = prev_row
+        for past_particle in prev_accepted.iter_rows(named=True):
+            perturbation_prob = past_particle["acceptance_weight"]
+            for key in perturbation_kernels.keys():
+                kernel = perturbation_kernels[key]
+                dist = current_particle[key] - past_particle[key]
+                perturbation_prob *= kernel.pdf(dist)
+            denominator += (
+                perturbation_prob
+                * prev_weights.filter(
+                    pl.col("simulation") == past_particle["simulation"]
+                )
+                .select("weight")
+                .item()
+            )
 
-            kernel_product = 1.0
-            for param_name in params.keys():
-                if param_name in ["simulation", "acceptance_weight"]:
-                    continue
-                if param_name in perturbation_kernels:
-                    kernel_dist = perturbation_kernels[param_name]
-                    kernel_product *= kernel_dist.pdf(
-                        params[param_name] - prev_params[param_name]
-                    )
-
-            prev_weight = prev_weights.filter(
-                pl.col("simulation") == prev_sim_number
-            )["weight"][0]
-            denominator += prev_weight * kernel_product
-
-        # Avoid division by zero; if denominator is zero set weight to zero directly
         weight = numerator / denominator if denominator != 0 else 0
-
-        # Retrieve stochastic acceptance weight from DataFrame
-        stochastic_weight = current_accepted.join(
-            pl.DataFrame({"simulation": [sim_number]}),
-            on="simulation",
-            how="inner",
-        )["acceptance_weight"][0]
-
-        # Store calculated weight
         new_weights.append(
-            {"simulation": sim_number, "weight": weight * stochastic_weight}
+            {
+                "simulation": simulation_id,
+                "weight": weight,
+            }
         )
 
     weights_df = pl.DataFrame(new_weights)

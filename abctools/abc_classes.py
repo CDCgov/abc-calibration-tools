@@ -291,7 +291,6 @@ class SimulationBundle:
         # Ensure distances have been calculated
         if self.distances.is_empty():
             raise ValueError("Distances have not been calculated.")
-
         # Filter and join to get accepted parameters
         self.accepted = self.distances.with_columns(
             (pl.col("distance") <= tolerance).alias("accept_bool")
@@ -319,7 +318,6 @@ class SimulationBundle:
             raise ValueError("Distances have not been calculated.")
 
         self.accept_reject(tolerance)
-
         # Group by parameters besides simulation and random seed
         param_names = self.inputs.drop(
             ["simulation", self.seed_variable_name]
@@ -335,7 +333,10 @@ class SimulationBundle:
             .filter(
                 pl.col("acceptance_weight") > 0
             )  # Filter particles with accepted count > 0
-            .join(self.accepted, on=param_names, how="full")
+            .join(self.accepted, on=param_names, how="right")
+            .with_columns(
+                pl.col("acceptance_weight").fill_null(strategy="zero")
+            )
         )
 
     def accept_proportion(self, proportion: float):
