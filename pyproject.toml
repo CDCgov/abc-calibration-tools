@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "abctools"
-version = "0.1.0"
+version = "0.2.0"
 description = ""
 authors = ["CDC/CFA - Team CMEI"]
 readme = "README.md"
@@ -17,6 +17,8 @@ pyqt6 = "^6.7.1"
 pyarrow = "^17.0.0"
 tqdm = "^4.66.5"
 polars = "^1.6.0"
+matplotlib = "^3.10.3"
+pytest = "^8.4.1"
 
 
 [build-system]

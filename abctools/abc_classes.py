@@ -1,7 +1,12 @@
+import logging
 import os
 import pickle
+from typing import Callable
 
 import polars as pl
+
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 class SimulationBundle:
@@ -11,15 +16,18 @@ class SimulationBundle:
 
     Attributes:
         inputs (pl.DataFrame): Input parameters for the simulations.
-        results (pl.DataFrame or dict): Results for the simulations, initialized as None.
+        results (pl.DataFrame): Results for the simulations, initialized as an empty DataFrame.
         step_number (int): Keeps track of the ABC step (a.k.a. generation/iteration)
         baseline_params (dict): Unchanging parameters needed for the simulation
-        experiment_params (list): Calculated from 'inputs'--list of experiment parameter names
+        experiment_params (list): Derived from 'inputs'--list of experiment parameter names
         status (str): Current status in the ABC process
-        distances (dict): Calculated distances from target
-        accepted (dict): Accepted simulations with experiment parameters
+        distances (pl.DataFrame): Calculated distances from target
+        accepted (pl.DataFrame): Accepted simulations with experiment parameters
         n_accepted (int): Calculated from 'accepted'--number of accepted simulations
-        weights (dict): Simulation weights for resampling
+        weights (pl.DataFrame): Simulation weights for resampling
+        merge_history (dict): History of merges with other SimulationBundle objects
+        summary_metrics (pl.DataFrame): Summary metrics calculated for each simulation
+        accept_results (pl.DataFrame): DataFrame of accepted results
     """
 
     def __init__(
@@ -28,6 +36,7 @@ class SimulationBundle:
         step_number: int,
         baseline_params: dict,
         status: str = "initialized",
+        seed_variable_name: str = "randomSeed",
     ):
         """
         Initialize a new instance of SimulationsBundle.
@@ -37,13 +46,19 @@ class SimulationBundle:
             step_number (int): Step/iteration/generation number.
             baseline_params (dict): The baseline parameters for the simulations.
             status (str): Current status of the object. Defaults to "initialized".
+            seed_variable_name (str): Name of the column containing random seeds. Defaults to "randomSeed".
         """
 
         # Public variables
         self.inputs = inputs
         self.status = status
         self.merge_history = {}
-        self.weights = None
+        self.results = pl.DataFrame()
+        self.distances = pl.DataFrame()
+        self.accepted = pl.DataFrame()
+        self.weights = pl.DataFrame()
+        self.summary_metrics = None
+        self.seed_variable_name = seed_variable_name
 
         # Private variables
         self._step_number = step_number
@@ -51,7 +66,7 @@ class SimulationBundle:
         self._experiment_params = [
             col
             for col in inputs.columns
-            if col not in ["simulation", "randomSeed"]
+            if col not in ["simulation", self.seed_variable_name]
         ]
 
     @property
@@ -77,7 +92,7 @@ class SimulationBundle:
     @property
     def n_accepted(self) -> int:
         """Getter for number of accepted simulations"""
-        return len(self.accepted)
+        return len(self.get_accepted())
 
     @property
     def writer_input_dict(self) -> dict:
@@ -137,53 +152,59 @@ class SimulationBundle:
             # Pickle only selected parts of the object and write it to file
             pickle.dump(self.__getstate__(), file)
 
-    def recover_params(self):
+    def add_results(self, results_df, merge_params=True):
+        """
+        Adds results to the SimulationBundle object.
+
+        Args:
+            results_df (pl.DataFrame): The results DataFrame to be added.
+
+        Returns:
+            None
+        """
+        # Ensure results_df is a Polars DataFrame with all of the same values in the 'simulation' column as inputs
+        # Note: there may be more than one row per simulation in results_df
+        if not isinstance(results_df, pl.DataFrame):
+            raise TypeError("results_df must be a Polars DataFrame.")
+
+        if not results_df["simulation"].is_in(self.inputs["simulation"]).all():
+            if merge_params:
+                raise ValueError(
+                    "results_df must contain all simulation numbers from inputs if merging inputs."
+                )
+            else:
+                raise Warning(
+                    "Warning: results_df does not contain all the simulation numbers from inputs."
+                )
+
+        # Recover params if applicable
+        if merge_params:
+            self.merge_params()
+
+        self.results = results_df
+
+    def merge_params(self):
         """
         Updates self.results by merging in columns from self.inputs onto self.results based on the 'simulation' column.
-
-        If self.results is a Polars DataFrame, it performs a left join directly.
-        If self.results is a dictionary of Polars DataFrames, it performs the join for each simulation.
 
         Returns:
             None
         """
         if self.results is None:
             raise ValueError(
-                "self.results is not set. Cannot recover parameters without results."
+                "self.results is not set. Cannot merge parameters without results."
             )
 
-        # Case 1: self.results is a single Polars DataFrame
-        if isinstance(self.results, pl.DataFrame):
-            # Perform a left join to add input parameters to results based on 'simulation'
-            merged_results = self.results.join(
-                self.inputs, on="simulation", how="left"
-            )
+        # Perform a left join to add input parameters to results based on 'simulation'
+        merged_results = self.results.join(
+            self.inputs, on=["simulation"], how="left"
+        )
 
-            # Update self.results with merged data
-            self.results = merged_results
+        # Ensure the DataFrame is unique on 'simulation'
+        merged_results = merged_results.unique(subset=["simulation"])
 
-        # Case 2: self.results is a dictionary of Polars DataFrames
-        elif isinstance(self.results, dict):
-            updated_results = {}
-
-            for sim_number, result_df in self.results.items():
-                # Perform a left join to add experiment parameters to results based on 'simulation'
-                merged_results = result_df.join(
-                    self.inputs.filter(pl.col("simulation") == sim_number),
-                    on="simulation",
-                    how="left",
-                )
-
-                # Update the current simulation's results with merged data
-                updated_results[sim_number] = merged_results
-
-            # Update all simulations at once after processing
-            self.results = updated_results
-
-        else:
-            raise TypeError(
-                "self.results must be either a Polars DataFrame or a dictionary of Polars DataFrames."
-            )
+        # Update self.results with merged data
+        self.results = merged_results
 
     def calculate_summary_metrics(self, summary_function):
         """
@@ -198,26 +219,18 @@ class SimulationBundle:
         if self.results is None:
             raise ValueError("No results available to summarize.")
 
-        self.summary_metrics = {}
+        self.summary_metrics = pl.DataFrame()
 
-        if isinstance(self.results, dict):
-            for sim_number, sim_result in self.results.items():
-                self.summary_metrics[sim_number] = summary_function(sim_result)
-        elif isinstance(self.results, pl.DataFrame):
-            grouped_results = self.results.group_by("simulation").apply(
-                summary_function
-            )
-            for sim_number in grouped_results["simulation"]:
-                self.summary_metrics[sim_number] = grouped_results.filter(
-                    pl.col("simulation") == sim_number
-                ).to_dict(False)
-        else:
-            raise TypeError(
-                "Expected results to be either a Polars DataFrame or a dictionary."
-            )
+        grouped_results = apply_per_group_preserve_key(
+            self.results,
+            key="simulation",
+            user_udf=summary_function,
+        )
+
+        self.summary_metrics = grouped_results
 
     def calculate_distances(
-        self, target_data, distance_function, use_summary_metrics=True
+        self, target_data, distance_function, use_summary_metrics=False
     ):
         """
         Calculates distances between simulation results and target data using a user-defined distance function.
@@ -225,33 +238,44 @@ class SimulationBundle:
         Args:
             target_data (tuple): Target data to compare against.
             distance_function (callable): A user-defined function that takes results_data and target_data and returns a distance.
-            use_summary_metrics (bool): Whether to use summary metrics or raw results. Defaults to True if summary metrics have been calculated.
+            use_summary_metrics (bool): Whether to use summary metrics or raw results. Defaults to False.
 
         Returns:
             None
         """
 
         # Check if summary metrics should be used
-        if use_summary_metrics and hasattr(self, "summary_metrics"):
+        if use_summary_metrics:
             data_to_use = self.summary_metrics
         else:
-            if isinstance(self.results, dict):
-                data_to_use = self.results
-            elif isinstance(self.results, pl.DataFrame):
-                data_to_use = {
-                    row["simulation"]: row for row in self.results.to_dict()
-                }
-            else:
-                raise TypeError(
-                    "Expected results to be either a Polars DataFrame or a dictionary of DataFrames."
+            data_to_use = self.results
+
+        self.distances = apply_per_group_preserve_key(
+            data_to_use,
+            key="simulation",
+            user_udf=distance_function,
+            result_column="distance",
+            target_data=target_data,
+        )
+
+    def get_accepted(self, one_rep_per_parset: bool = False):
+        if self.accepted.is_empty():
+            raise ValueError(
+                "Accepted simulations have not been determined yet."
+            )
+        if one_rep_per_parset:
+            return (
+                self.accepted.filter(pl.col("accept_bool"))
+                .group_by(
+                    self.inputs.drop(
+                        ["simulation", self.seed_variable_name]
+                    ).columns
                 )
-
-        # Calculate distances using the chosen data
-        self.distances = {}
-
-        for sim_number, sim_data in data_to_use.items():
-            distance = distance_function(sim_data, target_data)
-            self.distances[sim_number] = distance
+                .agg([pl.col("simulation").min()])
+                .drop("simulation")
+            )
+        else:
+            return self.accepted.filter(pl.col("accept_bool"))
 
     def accept_reject(self, tolerance):
         """
@@ -265,28 +289,12 @@ class SimulationBundle:
         """
 
         # Ensure distances have been calculated
-        if not hasattr(self, "distances"):
+        if self.distances.is_empty():
             raise ValueError("Distances have not been calculated.")
-
-        # Initialize accepted simulations dictionary
-        self.accepted = {}
-        self.acceptance_weights = {}
-
-        # Iterate over simulations and accept those within tolerance
-        for sim_number, distance in self.distances.items():
-            if distance <= tolerance:
-                # Filter inputs for current simulation and remove 'simulation' and 'randomSeed' columns if present
-                accepted_params = self.inputs.filter(
-                    pl.col("simulation") == sim_number
-                )
-                if "simulation" in accepted_params.columns:
-                    accepted_params = accepted_params.drop("simulation")
-                if "randomSeed" in accepted_params.columns:
-                    accepted_params = accepted_params.drop("randomSeed")
-
-                # Add filtered parameters to the dictionary of accepted simulations
-                self.accepted[sim_number] = accepted_params
-                self.acceptance_weights[sim_number] = 1.0
+        # Filter and join to get accepted parameters
+        self.accepted = self.distances.with_columns(
+            (pl.col("distance") <= tolerance).alias("accept_bool")
+        ).join(self.inputs, on="simulation")
 
     def accept_stochastic(
         self,
@@ -306,41 +314,32 @@ class SimulationBundle:
             ValueError: If distances have not been previously calculated.
         """
 
-        if not hasattr(self, "distances"):
+        if self.distances.is_empty():
             raise ValueError("Distances have not been calculated.")
 
         self.accept_reject(tolerance)
-        self.collate_accept_results()
-
         # Group by parameters besides simulation and random seed
-        particle_prop_accepted = self.accept_results.group_by(
-            self.inputs.drop(["simulation", "randomSeed"]).columns
-        ).agg(
-            pl.col("accept_bool").mean().alias("acceptance_weight"),
-            pl.col("simulation").min().alias("simulation"),
+        param_names = self.inputs.drop(
+            ["simulation", self.seed_variable_name]
+        ).columns
+
+        self.accepted = (
+            self.accepted.group_by(param_names)
+            .agg(
+                [
+                    pl.col("accept_bool").mean().alias("acceptance_weight"),
+                ]
+            )
+            .filter(
+                pl.col("acceptance_weight") > 0
+            )  # Filter particles with accepted count > 0
+            .join(self.accepted, on=param_names, how="right")
+            .with_columns(
+                pl.col("acceptance_weight").fill_null(strategy="zero")
+            )
         )
 
-        # filter particles with accepted count > 0
-        particle_prop_accepted = particle_prop_accepted.filter(
-            pl.col("acceptance_weight") > 0
-        )
-
-        self.acceptance_weights = {}
-        self.accepted = {}
-        # Create acceptance weights (to be included in the weights assignment) and params dict
-        for row in particle_prop_accepted.rows(named=True):
-            self.acceptance_weights.update(
-                {row["simulation"]: row["acceptance_weight"]}
-            )
-            self.accepted.update(
-                {
-                    row["simulation"]: self.inputs.filter(
-                        pl.col("simulation") == row["simulation"]
-                    ).drop(["simulation", "randomSeed"])
-                }
-            )
-
-    def accept_proportion(self, proportion):
+    def accept_proportion(self, proportion: float):
         """
         Accepts a specified proportion of simulations with the smallest distances.
         This method ranks all simulations by their distance values in ascending order
@@ -358,69 +357,24 @@ class SimulationBundle:
         """
 
         # Ensure distances have been calculated
-        if not hasattr(self, "distances"):
+        if self.distances.is_empty():
             raise ValueError("Distances have not been calculated.")
 
         # Calculate the number of simulations to accept based on the given proportion (minimum of 1)
         num_to_accept = max(1, int(len(self.distances) * proportion))
 
         # Sort simulations by distance in ascending order and select the best ones
-        sorted_simulations = sorted(
-            self.distances.items(), key=lambda item: item[1]
-        )
+        sorted_distances = self.distances.sort("distance").head(num_to_accept)
 
-        # Initialize/clear accepted simulations dictionary
-        self.accepted = {}
-        self.acceptance_weights = {}
+        # Filter the accepted parameters, remove simulation and seed columns
+        accepted_params = self.inputs.filter(
+            pl.col("simulation").is_in(sorted_distances["simulation"])
+        ).drop(["simulation", self.seed_variable_name], None)
 
-        # Accept only the top-performing simulations as determined by the specified proportion
-        for sim_number, distance in sorted_simulations[:num_to_accept]:
-            # Retrieve and clean input parameters for each accepted simulation
-            accepted_params = self.inputs.filter(
-                pl.col("simulation") == sim_number
-            )
-            if "simulation" in accepted_params.columns:
-                accepted_params = accepted_params.drop("simulation")
-            if "randomSeed" in accepted_params.columns:
-                accepted_params = accepted_params.drop("randomSeed")
-
-            # Store parameters of accepted simulations in an attribute for later use or analysis
-            self.accepted[sim_number] = accepted_params
-            self.acceptance_weights[sim_number] = 1.0
-
-    def collate_accept_results(self):
-        """
-        Makes a single DataFrame attribute from ABC results of accepted, distance, and inputs.
-        Args:
-            self
-        Returns:
-            None
-        Raises:
-            ValueError: if accept is not previously calculated
-        """
-
-        # Ensure accept is already calculated
-        if not hasattr(self, "accepted"):
-            raise ValueError("Accept has not been calculated.")
-
-        # Dummy mapper to join distances and accept with inputs
-        mapper = pl.DataFrame(
-            {
-                "simulation": self.distances.keys(),
-                "distance": self.distances.values(),
-            }
-        )
-
-        # Joining results with inputs
-        distance_results = self.inputs.join(
-            mapper, on="simulation", how="left"
-        )
-
-        # Adding logical column whether an input was accepted and storing as self attribute
-        accepted_sims = list(int(k) for k in self.accepted.keys())
-        self.accept_results = distance_results.with_columns(
-            pl.col("simulation").is_in(accepted_sims).alias("accept_bool")
-        )
+        # Create accepted dataframe
+        self.accepted = sorted_distances.join(
+            accepted_params, on="simulation", how="left"
+        ).with_columns(pl.lit(1.0).alias("acceptance_weight"))
 
     def merge_with(self, other_bundle):
         """
@@ -435,7 +389,7 @@ class SimulationBundle:
         """
 
         # Merge inputs DataFrames directly
-        merged_inputs = self.inputs.vstack(other_bundle.inputs)
+        merged_inputs = pl.concat([self.inputs, other_bundle.inputs])
 
         # Check for duplicate simulation numbers after merging
         if (
@@ -449,31 +403,63 @@ class SimulationBundle:
         # If no duplicates are found, proceed with updating self.inputs
         self.inputs = merged_inputs
 
-        # Merge results depending on their type
-        if isinstance(other_bundle.results, dict) and isinstance(
-            self.results, dict
-        ):
-            self.results.update(other_bundle.results)
-        elif isinstance(other_bundle.results, pl.DataFrame) and isinstance(
-            self.results, pl.DataFrame
-        ):
-            self.results.vstack(other_bundle.results)
-        else:
-            raise TypeError(
-                "Cannot merge results: types do not match or are not supported."
-            )
+        # Merge results as DataFrames
+        self.results = pl.concat([self.results, other_bundle.results])
 
-        # Merge distances dictionaries directly
-        self.distances.update(other_bundle.distances)
+        # Merge distances DataFrames directly
+        self.distances = pl.concat([self.distances, other_bundle.distances])
 
-        # Merge accepted simulations dictionaries directly
-        self.accepted.update(other_bundle.accepted)
+        # Merge accepted simulations DataFrames directly
+        self.accepted = pl.concat([self.accepted, other_bundle.accepted])
 
-        # Merge acceptance weights dictionaries directly
-        self.acceptance_weights.update(other_bundle.acceptance_weights)
+        # Merge summary metrics DataFrames directly
+        self.summary_metrics = pl.concat(
+            [self.summary_metrics, other_bundle.summary_metrics]
+        )
 
         # Record the merge event in the history
         current_merge_index = len(self.merge_history) + 1
         number_merged = len(other_bundle.inputs)
 
         self.merge_history[current_merge_index] = number_merged
+
+
+def apply_per_group_preserve_key(
+    df: pl.DataFrame,
+    key: str,
+    user_udf: Callable[[pl.DataFrame], pl.DataFrame],
+    *args,
+    result_column: str = "result",  # Specify the column name for scalar outputs
+    **kwargs
+) -> pl.DataFrame:
+    """
+    Apply a user-defined function to each group of a DataFrame, preserving the key column.
+    NOTE: This is surprisingly a bit tricky in polars, and a better solution is welcome.
+    Handles both DataFrame and scalar outputs from the user-defined function.
+
+    Args:
+        df (pl.DataFrame): The input DataFrame.
+        key (str): The column to group by.
+        user_udf (Callable): The user-defined function to apply to each group.
+        result_column (str): The column name to use if the user_udf returns a scalar.
+        *args, **kwargs: Additional arguments to pass to the user_udf.
+
+    Returns:
+        pl.DataFrame: A DataFrame with the key column and the results of the user_udf.
+    """
+    parts = df.partition_by(key)
+    mapped_parts = []
+
+    for part in parts:
+        result = user_udf(part, *args, **kwargs)
+        if not isinstance(result, pl.DataFrame):
+            # Wrap scalar output in a DataFrame
+            result = pl.DataFrame({result_column: [result]})
+        # Add the key column to the result
+        result = result.with_columns(pl.lit(part[key][0]).alias(key))
+        mapped_parts.append(result)
+
+    # Concatenate all parts and reorder columns to place the key first
+    result = pl.concat(mapped_parts, how="vertical")
+    columns = [key] + [col for col in result.columns if col != key]
+    return result.select(columns)

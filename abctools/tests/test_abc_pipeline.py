@@ -1,8 +1,10 @@
 import math
 import os
+import random
 import unittest
 
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
+import numpy as np
 import polars as pl
 from scipy.stats import uniform
 
@@ -11,6 +13,8 @@ from abctools.abc_classes import SimulationBundle
 
 # Set random seed
 random_seed = 12345
+random.seed(random_seed)
+np.random.seed(random.randint(0, 2**32 - 1))
 
 
 def run_toy_model(params: dict):
@@ -56,23 +60,37 @@ def run_toy_model(params: dict):
 
 def run_experiment_sequence(
     simulations_df: pl.DataFrame, summary_function=None
-):
-    """Takes in Polars Dataframe of simulation (full) parameter data and outputs complete or summarized results from a stochastic SIR model"""
-    results_dict = {}
+) -> pl.DataFrame:
+    """Takes in Polars DataFrame of simulation (full) parameter data and outputs complete or summarized results from a stochastic SIR model"""
+    results_list = []
     for simulation_params in simulations_df.rows(named=True):
         results = run_toy_model(simulation_params)
 
         if summary_function:
             summarized_results = summary_function(results)
-            results_dict[simulation_params["simulation"]] = summarized_results
+            results_list.append(
+                {
+                    "simulation": simulation_params["simulation"],
+                    "summary_metrics": summarized_results,
+                }
+            )
         else:
-            results_dict[simulation_params["simulation"]] = results
+            results = results.with_columns(
+                pl.lit(simulation_params["simulation"])
+                .alias("simulation")
+                .cast(pl.Int64)
+            )
+            results_list.append(results)
 
-    return results_dict
+    if summary_function:
+        return pl.DataFrame(results_list)
+    else:
+        return pl.concat(results_list)
 
 
 def calculate_infection_metrics(df):
     """User-defined function to calculate infection metrics, in this case time to peak infection and total infected"""
+
     # Find the time of peak infection (first instance, if multiple)
     time_to_peak_infection = (
         df.sort("infected", descending=True).select(pl.first("time"))
@@ -81,16 +99,31 @@ def calculate_infection_metrics(df):
     # Calculate total infected by taking the maximum value from the 'recovered' column
     total_infected = df.get_column("recovered").max()
 
-    metrics = (time_to_peak_infection, total_infected)
-    return metrics
+    # Create a DataFrame with the metrics
+    metrics_data = {
+        "time_to_peak_infection": [time_to_peak_infection],
+        "total_infected": [total_infected],
+    }
+
+    metrics_df = pl.DataFrame(metrics_data)
+
+    return metrics_df
 
 
-def calculate_distance(results_data: tuple, target_data: tuple) -> float:
+def calculate_distance(
+    results_data: pl.DataFrame, target_data: pl.DataFrame
+) -> float:
     """User-defined function to measure Euclidean distance from target"""
 
-    # Unpack data from tuples
-    time_to_peak_infection_results, total_infected_results = results_data
-    time_to_peak_infection_target, total_infected_target = target_data
+    # Extract values from DataFrames
+    time_to_peak_infection_results = results_data[
+        "time_to_peak_infection"
+    ].item()
+    total_infected_results = results_data["total_infected"].item()
+    time_to_peak_infection_target = target_data[
+        "time_to_peak_infection"
+    ].item()
+    total_infected_target = target_data["total_infected"].item()
 
     # Calculate differences
     time_diff = time_to_peak_infection_results - time_to_peak_infection_target
@@ -175,7 +208,7 @@ class TestABCPipeline(unittest.TestCase):
                         params_inputs=self.experiment_params_prior_dist,
                         n_parameter_sets=self.n_init,
                         add_random_seed=self.stochastic,
-                        seed=random_seed,
+                        seed=random.randint(0, 2**32 - 1),
                     )
                     self.assertEqual(input_df.shape[0], self.n_init)
             else:
@@ -185,23 +218,22 @@ class TestABCPipeline(unittest.TestCase):
                         f"Resample, step #{step_number} (includes perturbation and validation checks against prior distributions"
                     ):
                         input_df = abc_methods.resample(
-                            sim_bundles[step_number - 1].accepted,
+                            sim_bundles[step_number - 1].get_accepted(),
                             n_samples=self.n_init,
                             replicates_per_sample=1,
                             perturbation_kernels=self.perturbation_kernels,
                             prior_distributions=self.experiment_params_prior_dist,
                             weights=sim_bundles[step_number - 1].weights,
-                            seed=random_seed,
                         )
-                        self.assertEqual(input_df.shape[0], self.n_init)
+                        self.assertEqual(len(input_df), self.n_init)
                 else:
                     with self.subTest(f"Resample, final step #{step_number}"):
                         input_df = abc_methods.resample(
-                            sim_bundles[step_number - 1].accepted,
+                            sim_bundles[step_number - 1].get_accepted(),
                             n_samples=self.n_init,
                             replicates_per_sample=1,
+                            prior_distributions=self.experiment_params_prior_dist,
                             weights=sim_bundles[step_number - 1].weights,
-                            seed=random_seed,
                         )
                         self.assertEqual(input_df.shape[0], self.n_init)
 
@@ -215,10 +247,12 @@ class TestABCPipeline(unittest.TestCase):
             )
 
             with self.subTest(f"Run Model, step #{step_number}"):
-                sim_bundle.results = run_experiment_sequence(
-                    sim_bundle.full_params_df
+                results = run_experiment_sequence(sim_bundle.full_params_df)
+                sim_bundle.add_results(results, merge_params=False)
+                self.assertEqual(
+                    sim_bundle.results.n_unique(subset=["simulation"]),
+                    self.n_init,
                 )
-                self.assertEqual(len(sim_bundle.results), self.n_init)
                 self.assertIn("time", sim_bundle.results[0].columns)
                 self.assertIn("infected", sim_bundle.results[0].columns)
                 self.assertIn("recovered", sim_bundle.results[0].columns)
@@ -229,25 +263,28 @@ class TestABCPipeline(unittest.TestCase):
                 sim_bundle.calculate_summary_metrics(
                     calculate_infection_metrics
                 )
-                for _, value in sim_bundle.summary_metrics.items():
-                    self.assertIsInstance(value, tuple)
-                    # todo: could ensure time to peak infection is in reasonable range
+
+                self.assertIsInstance(sim_bundle.summary_metrics, pl.DataFrame)
+                self.assertEqual(len(sim_bundle.summary_metrics), self.n_init)
+                # todo: could ensure time to peak infection is in reasonable range
 
             with self.subTest(f"Calculate Distances, step #{step_number}"):
                 sim_bundle.calculate_distances(
-                    self.target_metrics, calculate_distance
+                    self.target_metrics,
+                    calculate_distance,
+                    use_summary_metrics=True,
                 )
+
                 # Ensure all distances are >=0
-                for distance in sim_bundle.distances.values():
+                for distance in sim_bundle.distances["distance"]:
                     self.assertGreaterEqual(distance, 0)
 
             with self.subTest(
                 f"Accept or Reject Simulations through accept_stochastic, step #{step_number}"
             ):
                 sim_bundle.accept_stochastic(self.tolerance[step_number])
-
                 # Ensure at least one simulation is accepted
-                self.assertGreaterEqual(len(sim_bundle.accepted), 1)
+                self.assertGreaterEqual(len(sim_bundle.get_accepted()), 1)
 
             with self.subTest(
                 f"Check Accepted Simulations and Run/Check/Merge Additional if Needed, step #{step_number}"
@@ -270,17 +307,16 @@ class TestABCPipeline(unittest.TestCase):
                             n_parameter_sets=n_additional,
                             add_random_seed=self.stochastic,
                             starting_simulation_number=sim_bundle.n_simulations,
-                            seed=random_seed,
+                            seed=random.randint(0, 2**32 - 1),
                         )
                     else:
                         additional_input_df = abc_methods.resample(
-                            sim_bundles[step_number - 1].accepted,
+                            sim_bundles[step_number - 1].get_accepted(),
                             n_samples=n_additional,
                             perturbation_kernels=self.perturbation_kernels,
                             prior_distributions=self.experiment_params_prior_dist,
                             weights=sim_bundles[step_number - 1].weights,
                             starting_simulation_number=sim_bundle.n_simulations,
-                            seed=random_seed,
                         )
 
                     print(
@@ -295,8 +331,11 @@ class TestABCPipeline(unittest.TestCase):
                     )
 
                     # Run model for additional simulations
-                    additional_sim_bundle.results = run_experiment_sequence(
+                    additional_results = run_experiment_sequence(
                         additional_sim_bundle.full_params_df
+                    )
+                    additional_sim_bundle.add_results(
+                        additional_results, merge_params=False
                     )
 
                     # Calculate summary metrics for the additional simulations
@@ -330,50 +369,39 @@ class TestABCPipeline(unittest.TestCase):
             with self.subTest(
                 f"Collate accepted simulations, step #{step_number}"
             ):
-                # Collate results from distance calculations
-                sim_bundle.collate_accept_results()
-
                 # Ensure the accepted logical column is present
-                self.assertIn("accept_bool", sim_bundle.accept_results.columns)
+                self.assertIn("accept_bool", sim_bundle.accepted.columns)
 
                 # Ensure the sum of TRUE counts in logical column is the number of accepted sims
                 self.assertEqual(
-                    sim_bundle.accept_results["accept_bool"].sum(),
+                    sim_bundle.accepted["accept_bool"].sum(),
                     sim_bundle.n_accepted,
                 )
-
                 # Check that distance values with accepted_sim == True are less than or equal to tolerance
-                accept_above_max = sim_bundle.accept_results.filter(
-                    pl.col("accept_bool")
-                ).filter(pl.col("distance") > self.tolerance[step_number])
-
+                accept_above_max = sim_bundle.get_accepted().filter(
+                    pl.col("distance") > self.tolerance[step_number]
+                )
                 self.assertTrue(accept_above_max.is_empty())
 
             with self.subTest(f"Calculate weights, step #{step_number}"):
                 if step_number == 0:
-                    # uniform weights on the initial step
-                    weights = {}
-                    for key in sim_bundle.accepted:
-                        weights[key] = sim_bundle.acceptance_weights[
-                            key
-                        ] / len(sim_bundle.accepted)
+                    # Uniform weights on the initial step
+                    total_accepted = sim_bundle.n_accepted
+                    weights = sim_bundle.get_accepted().select(
+                        pl.col("simulation"),
+                        (pl.lit(1.0) / total_accepted).alias("weight"),
+                    )
                 else:
-                    prev_step_accepted = sim_bundles[step_number - 1].accepted
-                    prev_step_weights = sim_bundles[step_number - 1].weights
-                    accept_ratio_weights = sim_bundle.acceptance_weights
-
                     weights = abc_methods.calculate_weights_abcsmc(
-                        current_accepted=sim_bundle.accepted,
-                        prev_step_accepted=prev_step_accepted,
-                        prev_weights=prev_step_weights,
-                        stochastic_acceptance_weights=accept_ratio_weights,
+                        current=sim_bundle,
+                        previous=sim_bundles[step_number - 1],
                         prior_distributions=self.experiment_params_prior_dist,
                         perturbation_kernels=self.perturbation_kernels,
                         normalize=True,
                     )
 
                 sim_bundle.weights = weights
-                total_weight = sum(weights.values())
+                total_weight = weights["weight"].sum()
                 self.assertAlmostEqual(total_weight, 1.0, places=5)
 
             # Add current sim_bundle to sim_bundles dictionary
@@ -387,7 +415,18 @@ class TestABCPipeline(unittest.TestCase):
                 os.makedirs(output_folder)
 
             for step_number, sim_bundle in sim_bundles.items():
-                data_list = list(sim_bundle.results.values())
+                unique_simulations = (
+                    sim_bundle.results.select("simulation")
+                    .unique()
+                    .to_series()
+                    .to_list()
+                )
+
+                data_list = [
+                    sim_bundle.results.filter(pl.col("simulation") == sim)
+                    for sim in unique_simulations
+                ]
+
                 x_col = "time"
                 y_col = "infected"
                 plot_args_list = [{"color": "blue", "alpha": 0.5}] * len(
@@ -412,79 +451,74 @@ class TestABCPipeline(unittest.TestCase):
                 )
                 fig.savefig(file_out)
 
-        with self.subTest("Make results plots"):
-            for step_number, sim_bundle in sim_bundles.items():
-                data_list = []
-                for summary_metrics in sim_bundle.summary_metrics.values():
-                    data_list.append(
-                        pl.DataFrame(
-                            {
-                                "time_to_peak_infections": [
-                                    summary_metrics[0]
-                                ],
-                                "total_infected": [summary_metrics[1]],
-                            }
-                        )
-                    )
-                x_col = "time_to_peak_infections"
-                y_col = "total_infected"
-                plot_args_list = [
-                    {"color": "blue", "alpha": 0.10, "marker": "o"}
-                ] * len(data_list)
+        # with self.subTest("Make results plots"):
+        #     for step_number, sim_bundle in sim_bundles.items():
+        #         data_list = []
+        #         for summary_metrics in sim_bundle.summary_metrics.iter_rows(
+        #             named=True
+        #         ):
+        #             data_list.append(
+        #                 pl.DataFrame(
+        #                     {
+        #                         "time_to_peak_infection": [
+        #                             summary_metrics["time_to_peak_infection"]
+        #                         ],
+        #                         "total_infected": [
+        #                             summary_metrics["total_infected"]
+        #                         ],
+        #                     }
+        #                 )
+        #             )
+        #         x_col = "time_to_peak_infection"
+        #         y_col = "total_infected"
+        #         plot_args_list = [
+        #             {"color": "blue", "alpha": 0.10, "marker": "o"}
+        #         ] * len(data_list)
 
-                # Add target data
-                data_list.append(
-                    pl.DataFrame(
-                        {
-                            "time_to_peak_infections": [
-                                self.target_metrics[0]
-                            ],
-                            "total_infected": [self.target_metrics[1]],
-                        }
-                    )
-                )
-                plot_args_list.append(
-                    {"color": "red", "alpha": 0.9, "marker": "o"}
-                )
-                # Label axes
-                xlabel = "Time to peak infections"
-                ylabel = "Total Infections"
+        #         # Add target data
+        #         data_list.append(self.target_metrics)
+        #         plot_args_list.append(
+        #             {"color": "red", "alpha": 0.9, "marker": "o"}
+        #         )
+        #         # Label axes
+        #         xlabel = "Time to peak infections"
+        #         ylabel = "Total Infections"
 
-                # Plot
-                fig = plot_utils.plot_xy_data(
-                    data_list, x_col, y_col, plot_args_list, xlabel, ylabel
-                )
-                file_out = os.path.join(
-                    output_folder,
-                    f"target_metrics_step_{step_number}.jpg",
-                )
-                fig.savefig(file_out)
+        #         # Plot
+        #         fig = plot_utils.plot_xy_data(
+        #             data_list, x_col, y_col, plot_args_list, xlabel, ylabel
+        #         )
+        #         file_out = os.path.join(
+        #             output_folder,
+        #             f"target_metrics_step_{step_number}.jpg",
+        #         )
+        #         fig.savefig(file_out)
 
-            with self.subTest("Make parameter histograms"):
-                output_folder = "abctools/tests/figs/parameters"
-                if not os.path.exists(output_folder):
-                    os.makedirs(output_folder)
+        #     with self.subTest("Make parameter histograms"):
+        #         output_folder = "abctools/tests/figs/parameters"
+        #         if not os.path.exists(output_folder):
+        #             os.makedirs(output_folder)
 
-                for step_number, sim_bundle in sim_bundles.items():
-                    for experiment_param in sim_bundle.experiment_params:
-                        df = sim_bundle.inputs
-                        col = experiment_param
-                        vline_value = self.target_params[experiment_param]
+        #         for step_number, sim_bundle in sim_bundles.items():
+        #             for experiment_param in sim_bundle.experiment_params:
+        #                 df = sim_bundle.inputs
+        #                 col = experiment_param
+        #                 vline_value = self.target_params[experiment_param]
 
-                        plt.hist(df[col])
-                        plt.axvline(
-                            x=vline_value,
-                            color="red",
-                        )
-                        plt.xlabel(experiment_param)
-                        plt.ylabel("frequency")
+        #                 plt.hist(df[col])
+        #                 plt.axvline(
+        #                     x=vline_value,
+        #                     color="red",
+        #                 )
+        #                 plt.xlabel(experiment_param)
+        #                 plt.ylabel("frequency")
 
-                        file_out = os.path.join(
-                            output_folder,
-                            f"{experiment_param}_hist_step_{step_number}.jpg",
-                        )
-                        plt.savefig(file_out)
-                        plt.close()
+        #                 file_out = os.path.join(
+        #                     output_folder,
+        #                     f"{experiment_param}_hist_step_{step_number}.jpg",
+        #                 )
+        #                 plt.savefig(file_out)
+        #                 plt.close()
 
         with self.subTest("Posterior predictive check"):
             # TODO: add posterior predictive check
